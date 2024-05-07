@@ -135,15 +135,15 @@ def compute_value_loss(agent, batch, network_params):
         cur_goals, _, _ = agent.network(batch['goals'], method='vae_state_encoder', params=network_params)
     
     elif agent.config['use_rep'] == "hilp_encoder":
-        cur_goals = agent.network(batch['low_goals'], method='hilp_phi')
+        cur_goals = agent.network(batch['goals'], method='hilp_phi')
         observations = agent.network(batch['observations'], method='hilp_phi')
         next_observations = agent.network(batch['next_observations'], method='hilp_phi')
         
     elif agent.config['use_rep'] == "hilp_subgoal_encoder":
-        cur_goals = agent.network(batch['low_goals'], method='hilp_phi')
+        cur_goals = agent.network(batch['goals'], method='hilp_phi')
         observations = batch['observations']
         next_observations = batch['next_observations']
-        
+
     else:
         cur_goals = batch['goals']
         observations = batch['observations']
