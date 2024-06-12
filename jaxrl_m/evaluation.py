@@ -67,7 +67,7 @@ def evaluate_with_trajectories(
             obs_goal = base_observation.copy()
             obs_goal[:2] = goal
             node_dim = np.arange(2)
-            interval, min_dist = 1, 4
+            interval, min_dist = 10, 4
         elif 'kitchen' in env_name:
             observation, obs_goal = observation[:30], observation[30:]
             obs_goal[:9] = base_observation[:9]
@@ -92,6 +92,8 @@ def evaluate_with_trajectories(
         h_step = interval
         dist = 0
         init_dist = 1e5 if FLAGS.relative_dist_in_eval_On else 0
+        
+        cos_distances = []
         
         if FLAGS.use_rep == "vae_encoder":
             obs_goal,_ ,_ = encoder_fn(observation=obs_goal)
@@ -143,10 +145,12 @@ def evaluate_with_trajectories(
             dists.append(dist)
         
             if config['use_keynode_in_eval_On']:
-                _, _, _, cur_obs_key_node = find_key_node(cur_obs_sub_goal)
-                diff_sub_goal_node = np.linalg.norm(cur_obs_key_node - cur_obs_sub_goal, axis=-1, keepdims=True)
-                diff_sub_goal_nodes.append(diff_sub_goal_node)
-                cur_obs_goal = cur_obs_key_node
+                cos_distance, _, _, cur_obs_key_node = find_key_node(cur_obs_sub_goal)
+                if cos_distance >= FLAGS.mapping_threshold:
+                    diff_sub_goal_node = np.linalg.norm(cur_obs_key_node - cur_obs_sub_goal, axis=-1, keepdims=True)
+                    diff_sub_goal_nodes.append(diff_sub_goal_node)
+                    cur_obs_goal = cur_obs_key_node  
+                cos_distances.append(cos_distance)
     
             cur_obs_goal_rep = cur_obs_goal                
             action = policy_fn(observations=observation, goals=cur_obs_goal_rep, low_dim_goals=True, temperature=eval_temperature)
@@ -218,7 +222,7 @@ def evaluate_with_trajectories(
     for k, v in stats.items():
         stats[k] = np.mean(v)
     
-    return stats, trajectories, renders, rep_trajectories
+    return stats, trajectories, renders, rep_trajectories, cos_distances
 
 class EpisodeMonitor(gym.ActionWrapper):
     """A class that computes episode returns and lengths."""

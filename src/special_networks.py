@@ -48,7 +48,7 @@ class RelativeRepresentation(nn.Module):
     module: nn.Module = None
     visual: bool = False
     layer_norm: bool = False
-    rep_type: str = 'concat'
+    rep_type: str = 'concat' 
     bottleneck: bool = True  # Meaning that we're using this representation for high-level actions
 
     @nn.compact
