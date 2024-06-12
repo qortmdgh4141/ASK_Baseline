@@ -425,10 +425,11 @@ def create_learner(
         actor_def = Policy(actor_hidden_dims, action_dim=action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
         
         def make_encoder(bottleneck):
+            # 0610 승호수정 goal only
             if bottleneck:
-                return RelativeRepresentation(rep_dim=rep_dim, hidden_dims=(*value_hidden_dims, rep_dim), layer_norm=use_layer_norm, bottleneck=flag.rep_normalizing_On)
+                return RelativeRepresentation(rep_dim=rep_dim, hidden_dims=(*value_hidden_dims, rep_dim), layer_norm=use_layer_norm, bottleneck=flag.rep_normalizing_On, rep_type=flag.rep_type)
             else:
-                return RelativeRepresentation(rep_dim=value_hidden_dims[-1], hidden_dims=(*value_hidden_dims, value_hidden_dims[-1]), layer_norm=use_layer_norm, bottleneck=False)
+                return RelativeRepresentation(rep_dim=value_hidden_dims[-1], hidden_dims=(*value_hidden_dims, value_hidden_dims[-1]), layer_norm=use_layer_norm, bottleneck=False, rep_type=flag.rep_type)
         
         if flag.use_rep == 'hiql_goal_encoder':
             value_goal_encoder = make_encoder(bottleneck=True)

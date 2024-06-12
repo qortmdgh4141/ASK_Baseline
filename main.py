@@ -88,6 +88,12 @@ flags.DEFINE_integer('vae_encoder_dim', 10, '')
 flags.DEFINE_float('vae_recon_coe', 0.00, '')
 flags.DEFINE_float('vae_kl_coe', 0.0, '')
 
+# 0610 승호수정 goal only
+flags.DEFINE_string('rep_type', 'state', '') # 'state' / 'concat'
+# 0610 승호수정 spherical
+flags.DEFINE_float('spherical_On', 0.0, '') # 0:Euclidean Distance // 1: Cosine Similarity
+flags.DEFINE_float('mapping_threshold', 0.0, '')
+
 wandb_config = default_wandb_config()
 wandb_config.update({
     'project': f'ASK_{project}',
@@ -329,7 +335,11 @@ def main(_):
     
     if FLAGS.use_rep == "hiql_goal_encoder":
         encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
-        rep_observations = d4rl_utils.get_rep_observation(encoder_fn, dataset, FLAGS)
+        # 0610 승호수정 spherical
+        if FLAGS.rep_type == 'concat':
+            rep_observations = d4rl_utils.get_rep_observation_spherical(encoder_fn, dataset, FLAGS)
+        elif FLAGS.rep_type == 'state':
+            rep_observations = d4rl_utils.get_rep_observation_goal_only(encoder_fn, dataset, FLAGS)
         dataset = d4rl_utils.add_data(dataset, rep_observations)
         
     elif FLAGS.use_rep == "vae_encoder":
@@ -349,7 +359,8 @@ def main(_):
     if FLAGS.config['build_keynode_time'] in ["pre_training", "during_training"]:       
         key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index= episode_index)
         if FLAGS.use_rep in ["hiql_goal_encoder", "vae_encoder", "hilp_subgoal_encoder", "hilp_encoder"]:
-            key_nodes.construct_nodes(rep_observations=rep_observations)
+            # 0610 승호수정 spherical
+            key_nodes.construct_nodes(rep_observations=rep_observations, spherical_On=FLAGS.spherical_On)
         find_key_node = jax.jit(key_nodes.find_closest_node)
         agent = agent.replace(key_nodes = key_nodes.pos)
     else:
@@ -417,7 +428,7 @@ def main(_):
             encoder_fn = jax.jit(jax.vmap(agent.get_vae_state_rep))
             rep_observations = d4rl_utils.get_rep_observation(encoder_fn, dataset, FLAGS)
             dataset = d4rl_utils.add_data(dataset, rep_observations)
-            key_nodes.construct_nodes(rep_observations=rep_observations)
+            key_nodes.construct_nodes(rep_observations=rep_observations)                
             find_key_node = jax.jit(key_nodes.find_closest_node)
             pretrain_dataset = GCSDataset(dataset, find_key_node = find_key_node, encoder_fn=encoder_fn, **FLAGS.gcdataset.to_dict())
 
@@ -427,8 +438,12 @@ def main(_):
                 rep_observations = d4rl_utils.get_hilp_rep_observation(encoder_fn, dataset, FLAGS)
             elif FLAGS.use_rep == "hiql_goal_encoder":
                 encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
-                rep_observations = d4rl_utils.get_rep_observation(encoder_fn, dataset, FLAGS)
-
+                # 0610 승호수정 spherical
+                if FLAGS.rep_type == 'concat':
+                    rep_observations = d4rl_utils.get_rep_observation_spherical(encoder_fn, dataset, FLAGS)
+                elif FLAGS.rep_type == 'state':
+                    rep_observations = d4rl_utils.get_rep_observation_goal_only(encoder_fn, dataset, FLAGS)
+        
             if FLAGS.kmean_weight_type == 'hilbert_td' :
                 dataset = d4rl_utils.hilp_add_data(dataset, rep_observations)
             elif FLAGS.kmean_weight_type in ['rtg_discount', 'rtg_uniform']:
@@ -436,9 +451,9 @@ def main(_):
                     
             if FLAGS.use_rep in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder"]:
                 key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index= episode_index)
-                key_nodes.construct_nodes(rep_observations=rep_observations)
+                # 0610 승호수정 spherical
+                key_nodes.construct_nodes(rep_observations=rep_observations, spherical_On=FLAGS.spherical_On)
                 find_key_node = jax.jit(key_nodes.find_closest_node)
-                key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index= episode_index)
                 agent = agent.replace(key_nodes = key_nodes.pos)
                 pretrain_dataset = GCSDataset(dataset, find_key_node = find_key_node, **FLAGS.gcdataset.to_dict())
             
@@ -455,7 +470,7 @@ def main(_):
                 decoder_fn = jax.jit(agent.get_vae_rep_state)
                 value_goal_fn = jax.jit(agent.get_value_goal)
 
-            eval_info, trajs, renders, rep_trajectories = evaluate_with_trajectories(
+            eval_info, trajs, renders, rep_trajectories, cos_distances = evaluate_with_trajectories(
                     policy_fn=policy_fn, high_policy_fn=high_policy_fn, encoder_fn=encoder_fn, decoder_fn=decoder_fn, value_goal_fn=value_goal_fn, env=env,
                     env_name=FLAGS.env_name, num_episodes=eval_episodes,
                     base_observation=base_observation, num_video_episodes=num_video_episodes,
@@ -502,7 +517,11 @@ def main(_):
                 key_node_fname = os.path.join(FLAGS.save_dir, f'key_node_{i}.pkl')
                 with open(key_node_fname, 'wb') as f:
                     pickle.dump(np.array(key_nodes.pos), f)
-                    
+                
+                cos_distances_path = os.path.join(FLAGS.save_dir, f'cos_distances_{i}.pkl')
+                with open(cos_distances_path, 'wb') as f:
+                    pickle.dump(np.array(cos_distances), f)
+                
                 fname = os.path.join(FLAGS.save_dir, f'params_{i}.pkl')
                 print(f'Saving to {fname}')
                 with open(fname, "wb") as f:
