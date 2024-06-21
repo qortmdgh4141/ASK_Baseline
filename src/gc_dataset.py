@@ -21,6 +21,7 @@ class GCDataset:
     reward_shift: float = -1.0
     terminal: bool = True
     use_rep: str = ""
+    hierarchy: str = ""
     
     @staticmethod
     def get_default_config():
@@ -168,6 +169,18 @@ class GCSDataset(GCDataset):
             else:
                 batch['high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['observations'])
 
+        if self.hierarchy == 'hierarchy':
+            high_goal_indx = self.sample_goals(high_target_idx)
+            high_success = (high_target_idx == high_goal_indx)
+            batch['high_rewards'] = high_success.astype(float) * self.reward_scale + self.reward_shift
+
+            if self.terminal:
+                batch['high_masks'] = (1.0 - high_success.astype(float))
+            else:
+                batch['high_masks'] = np.ones(batch_size)
+        
+        
+        
         if isinstance(batch['goals'], FrozenDict):
             # Freeze the other observations
             batch['observations'] = freeze(batch['observations'])

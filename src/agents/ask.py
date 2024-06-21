@@ -17,7 +17,7 @@ import flax.linen as nn
 from flax.core import freeze, unfreeze
 import ml_collections
 from . import iql
-from src.special_networks import Representation, HierarchicalActorCritic, RelativeRepresentation, MonolithicVF, Vae_Encoder, Vae_Decoder, HILP_GoalConditionedPhiValue
+from src.special_networks import get_rep, Representation, HierarchicalActorCritic, RelativeRepresentation, MonolithicVF, Vae_Encoder, Vae_Decoder, HILP_GoalConditionedPhiValue
 
 
 @jax.jit
@@ -89,8 +89,13 @@ def compute_high_actor_loss(agent, batch, network_params):
         observations = batch['observations']
         high_targets = batch['high_targets']
     
-    v1, v2 = agent.network(observations, cur_goals, method='value')
-    nv1, nv2 = agent.network(high_targets, cur_goals, method='value')
+    if agent.config['value_function_num'] == 'hierarchy':
+        v1, v2 = agent.network(observations, cur_goals, method='high_value')
+        nv1, nv2 = agent.network(high_targets, cur_goals, method='high_value')
+    else:
+        v1, v2 = agent.network(observations, cur_goals, method='value')
+        nv1, nv2 = agent.network(high_targets, cur_goals, method='value')
+        
     v = (v1 + v2) / 2
     nv = (nv1 + nv2) / 2
 
@@ -102,7 +107,10 @@ def compute_high_actor_loss(agent, batch, network_params):
 
 
     if agent.config['use_rep'] in ["hiql_goal_encoder", "vae_encoder"]:
-        target = agent.network(targets=high_targets, bases=observations, method='value_goal_encoder')
+        if agent.config['value_function_num'] == 'hierarchy':
+            target = agent.network(targets=high_targets, bases=observations, method='high_value_goal_encoder')
+        else:
+            target = agent.network(targets=high_targets, bases=observations, method='value_goal_encoder')
     elif agent.config['use_rep'] == "hilp_encoder":
         target = high_targets 
     elif agent.config['use_rep'] == "hilp_subgoal_encoder":
@@ -166,6 +174,12 @@ def compute_value_loss(agent, batch, network_params):
     value_loss = value_loss1 + value_loss2
 
     advantage = adv
+    
+    
+    
+    
+    
+    
     return value_loss, {
         'value_loss': value_loss,
         'v max': v1.max(),
@@ -178,6 +192,63 @@ def compute_value_loss(agent, batch, network_params):
         'accept prob': (advantage >= 0).mean(),
     }
 
+def compute_high_value_loss(agent, batch, network_params):
+    batch['high_masks'] = 1.0 - batch['high_rewards']
+    batch['high_rewards'] = batch['high_rewards'] - 1.0
+    
+    if agent.config['use_rep'] == "vae_encoder":
+        observations, _, _ = agent.network(batch['observations'], method='vae_state_encoder', params=network_params)
+        next_observations, _, _ = agent.network(batch['high_targets'], method='vae_state_encoder', params=network_params)
+        # 질문 왜 vae만 하는지여부
+        #if agent.config['keynode_ratio']:
+        #    length = int(agent.config['keynode_ratio']*len(observations))
+        #    batch['goals'] = jnp.concatenate([batch['goals'][:length], batch['key_node'][length:]], axis=0)
+        cur_goals, _, _ = agent.network(batch['high_goals'], method='vae_state_encoder', params=network_params)
+    
+    elif agent.config['use_rep'] == "hilp_encoder":
+        cur_goals = agent.network(batch['high_goals'], method='hilp_phi')
+        observations = agent.network(batch['observations'], method='hilp_phi')
+        next_observations = agent.network(batch['high_targets'], method='hilp_phi')
+        
+    elif agent.config['use_rep'] == "hilp_subgoal_encoder":
+        cur_goals = agent.network(batch['high_goals'], method='hilp_phi')
+        observations = batch['observations']
+        next_observations = batch['high_targets']
+
+    else:
+        cur_goals = batch['high_goals']
+        observations = batch['observations']
+        next_observations = batch['high_targets']
+    
+    (next_v1, next_v2) = agent.network(next_observations, cur_goals, method='high_target_value')
+    next_v = jnp.minimum(next_v1, next_v2)
+    q = batch['high_rewards'] + agent.config['discount'] * batch['high_masks'] * next_v
+
+    (v1_t, v2_t) = agent.network(observations, cur_goals, method='high_target_value')
+    v_t = (v1_t + v2_t) / 2
+    adv = q - v_t
+
+    q1 = batch['high_rewards'] + agent.config['discount'] * batch['high_masks'] * next_v1
+    q2 = batch['high_rewards'] + agent.config['discount'] * batch['high_masks'] * next_v2
+    (v1, v2) = agent.network(observations, cur_goals, method='high_value', params=network_params)
+
+    value_loss1 = expectile_loss(adv, q1 - v1, agent.config['pretrain_expectile']).mean()
+    value_loss2 = expectile_loss(adv, q2 - v2, agent.config['pretrain_expectile']).mean()
+    value_loss = value_loss1 + value_loss2
+
+    advantage = adv
+    return value_loss, {
+        'high_value_loss': value_loss,
+        'high_v max': v1.max(),
+        'high_v min': v1.min(),
+        'high_v mean': v1.mean(),
+        'high_abs adv mean': jnp.abs(advantage).mean(),
+        'high_adv mean': advantage.mean(),
+        'high_adv max': advantage.max(),
+        'high_adv min': advantage.min(),
+        'high_accept prob': (advantage >= 0).mean(),
+    }
+    
 def hilp_compute_value_loss(agent, batch, network_params):
     (next_v1, next_v2) = agent.network(batch['next_observations'], batch['goals'], method='hilp_target_value')
     next_v = jnp.minimum(next_v1, next_v2)
@@ -248,6 +319,13 @@ class JointTrainAgent(iql.IQLAgent):
                     info[f'value/{k}'] = v
             else:
                 value_loss = 0.
+                
+            if agent.config['value_function_num']=='hierarchy':
+                high_value_loss, value_info = compute_high_value_loss(agent, pretrain_batch, network_params)
+                for k, v in value_info.items():
+                    info[f'high_value/{k}'] = v
+            else:
+                high_value_loss = 0.
 
             # Actor
             if actor_update:
@@ -281,7 +359,7 @@ class JointTrainAgent(iql.IQLAgent):
             else:
                 rc_loss = 0.
                             
-            loss = value_loss + actor_loss + high_actor_loss + hilp_value_loss + agent.config['vae_recon_coe']*rc_loss 
+            loss = value_loss + actor_loss + high_actor_loss + hilp_value_loss + agent.config['vae_recon_coe']*rc_loss + high_value_loss
             
             return loss, info
         
@@ -295,6 +373,15 @@ class JointTrainAgent(iql.IQLAgent):
             )
             params = unfreeze(new_network.params)
             params['networks_target_value'] = new_target_params
+            new_network = new_network.replace(params=freeze(params))
+        
+        # HIQL update
+        if agent.config['value_function_num'] == 'hierarchy':
+            new_target_params = jax.tree_map(
+                lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_high_value'], agent.network.params['networks_high_target_value']
+            )
+            params = unfreeze(new_network.params)
+            params['networks_high_target_value'] = new_target_params
             new_network = new_network.replace(params=freeze(params))
  
         # HILP update
@@ -316,7 +403,7 @@ class JointTrainAgent(iql.IQLAgent):
             new_network = new_network.replace(params=freeze(params))
             
         return agent.replace(network=new_network), info
-    pretrain_update = jax.jit(pretrain_update, static_argnames=('value_update', 'actor_update', 'high_actor_update', 'use_rep'))
+    pretrain_update = jax.jit(pretrain_update, static_argnames=('value_update', 'actor_update', 'high_actor_update'))
 
     def sample_actions(agent,
                        observations: np.ndarray,
@@ -357,6 +444,14 @@ class JointTrainAgent(iql.IQLAgent):
                        bases: np.ndarray = None,
                        ) -> jnp.ndarray:
         return agent.network(targets=targets, goals=bases, method='policy_goal_encoder')
+    
+    @jax.jit
+    def get_policy_rep(agent,
+                       *,
+                       targets: np.ndarray,
+                       bases: np.ndarray = None,
+                       ) -> jnp.ndarray:
+        return agent.network(targets=targets, goals=bases, method='policy_goal_encoder')
 
     # HILP 
     @jax.jit
@@ -372,6 +467,7 @@ class JointTrainAgent(iql.IQLAgent):
                             bases: np.ndarray = None,
                             ) -> jnp.ndarray:
         return agent.network(targets=targets, bases=bases, method='value_goal_encoder')
+        # return agent.encoders['value_goal'], targets=targets, bases=bases)
     
     # VAE    
     @jax.jit
@@ -402,6 +498,8 @@ def create_learner(
         way_steps: int = 0,
         rep_dim: int = 10,
         use_layer_norm: int = 1,
+        visual: int = 0,
+        encoder: str = 'impala', # 'impala_small'
         key_nodes : Any = None,
         flag : Any =None,
         **kwargs):
@@ -419,20 +517,40 @@ def create_learner(
         policy_goal_encoder = None # img
         high_policy_state_encoder = None # img
         high_policy_goal_encoder = None # img
-                
+        if visual:
+            from jaxrl_m.vision import encoders
+
+            visual_encoder = encoders[encoder]
+            def make_encoder(bottleneck):
+                if bottleneck:
+                    return RelativeRepresentation(rep_dim=rep_dim, hidden_dims=(rep_dim,), visual=True, module=visual_encoder, layer_norm=use_layer_norm, rep_type=flag.rep_type, bottleneck=True)
+                else:
+                    return RelativeRepresentation(rep_dim=value_hidden_dims[-1], hidden_dims=(value_hidden_dims[-1],), visual=True, module=visual_encoder, layer_norm=use_layer_norm, rep_type=flag.rep_type, bottleneck=False)
+
+            value_state_encoder = make_encoder(bottleneck=False)
+            value_goal_encoder = make_encoder(bottleneck=True)
+            policy_state_encoder = make_encoder(bottleneck=False)
+            policy_goal_encoder = make_encoder(bottleneck=False)
+            high_policy_state_encoder = make_encoder(bottleneck=False)
+            high_policy_goal_encoder = make_encoder(bottleneck=False)
+        else:
+            def make_encoder(bottleneck):
+                # 0610 승호수정 goal only
+                if bottleneck:
+                    return RelativeRepresentation(rep_dim=rep_dim, hidden_dims=(*value_hidden_dims, rep_dim), layer_norm=use_layer_norm, bottleneck=flag.rep_normalizing_On, rep_type=flag.rep_type)
+                else:
+                    return RelativeRepresentation(rep_dim=value_hidden_dims[-1], hidden_dims=(*value_hidden_dims, value_hidden_dims[-1]), layer_norm=use_layer_norm, bottleneck=False, rep_type=flag.rep_type)
+        
+        
         value_def = MonolithicVF(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm)
+        high_value_def = MonolithicVF(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm)
         action_dim = actions.shape[-1]
         actor_def = Policy(actor_hidden_dims, action_dim=action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
         
-        def make_encoder(bottleneck):
-            # 0610 승호수정 goal only
-            if bottleneck:
-                return RelativeRepresentation(rep_dim=rep_dim, hidden_dims=(*value_hidden_dims, rep_dim), layer_norm=use_layer_norm, bottleneck=flag.rep_normalizing_On, rep_type=flag.rep_type)
-            else:
-                return RelativeRepresentation(rep_dim=value_hidden_dims[-1], hidden_dims=(*value_hidden_dims, value_hidden_dims[-1]), layer_norm=use_layer_norm, bottleneck=False, rep_type=flag.rep_type)
         
         if flag.use_rep == 'hiql_goal_encoder':
             value_goal_encoder = make_encoder(bottleneck=True)
+            high_value_goal_encoder = make_encoder(bottleneck=True)
         
         elif flag.use_rep in ['hilp_subgoal_encoder', 'hilp_encoder']: 
             hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=(512, 512, 512), use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=False)
@@ -447,7 +565,7 @@ def create_learner(
         elif flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
             high_action_dim = rep_dim
         else:
-            observations.shape[-1]
+            high_action_dim = observations.shape[-1]
             
         high_actor_def = Policy(actor_hidden_dims, action_dim=high_action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
 
@@ -457,6 +575,7 @@ def create_learner(
                 'vae_state_decoder' : vae_state_decoder, # vae
                 'value_state': value_state_encoder,
                 'value_goal': value_goal_encoder,
+                'high_value_goal': high_value_goal_encoder,
                 'policy_state': policy_state_encoder,
                 'policy_goal': policy_goal_encoder,
                 'high_policy_state': high_policy_state_encoder,
@@ -467,6 +586,8 @@ def create_learner(
                 'hilp_target_value' : copy.deepcopy(hilp_value_goal_encoder), # hilp
                 'value': value_def,
                 'target_value': copy.deepcopy(value_def),
+                'high_value': high_value_def,
+                'high_target_value': copy.deepcopy(high_value_def),
                 'actor': actor_def,
                 'high_actor': high_actor_def,
             },
@@ -477,6 +598,8 @@ def create_learner(
         network = TrainState.create(network_def, network_params, tx=network_tx)
         params = unfreeze(network.params)
         params['networks_target_value'] = params['networks_value']
+        if flag.value_function_num == 'hierarchy':
+            params['networks_high_target_value'] = params['networks_high_value']
         
         if flag.use_rep in ["hilp_subgoal_encoder", "hilp_encoder"]: # hilp
             params['networks_hilp_target_value'] = params['networks_hilp_value'] # hilp
@@ -485,7 +608,7 @@ def create_learner(
         config = flax.core.FrozenDict(dict(
             discount=discount, temperature=temperature, high_temperature=high_temperature,
             target_update_rate=tau, pretrain_expectile=pretrain_expectile, way_steps=way_steps, keynode_ratio=flag.keynode_ratio, 
-            env_name=kwargs['env_name'], use_rep=flag.use_rep, vae_recon_coe=flag.vae_recon_coe, vae_kl_coe=flag.vae_kl_coe,
+            env_name=kwargs['env_name'], use_rep=flag.use_rep, vae_recon_coe=flag.vae_recon_coe, vae_kl_coe=flag.vae_kl_coe, value_function_num=flag.value_function_num
         ))
 
         return JointTrainAgent(rng, network=network, critic=None, value=None, target_value=None, actor=None, config=config, key_nodes=key_nodes)

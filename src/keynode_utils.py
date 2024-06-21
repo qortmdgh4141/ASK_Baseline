@@ -42,8 +42,11 @@ def build_keynodes(dataset, flags=None, episode_index= None):
     else:
         state_values = np.ones(obs.shape[0]).astype(np.float32) 
         nodes = KeyNode(obs=obs[data_index], values=state_values[data_index], flags=flags)
+        
+    if flags.visual:
+        return nodes, data_index
             
-    nodes.construct_nodes() 
+    # nodes.construct_nodes() 
     nodes.visualize_key_nodes(flags)
     
     return nodes, data_index
@@ -80,7 +83,7 @@ class KeyNode(object):
             self.rep_f_s = np.array(rep_observations) 
             # 0610 승호수정 spherical
             self.rep_reduced_f_s, self.rep_weighted_values, self.rep_labels = self.sparse_node(f_s=self.rep_f_s, values=self.values, keynode_num = self.keynode_num, spherical_On=spherical_On)
-            self.graph = self.create_nodes(reduced_f_s=self.rep_reduced_f_s, weighted_values=self.weighted_values)
+            self.graph = self.create_nodes(reduced_f_s=self.rep_reduced_f_s, weighted_values=self.rep_weighted_values)
 
     def sparse_node(self,
                     f_s: np.ndarray,
@@ -101,7 +104,8 @@ class KeyNode(object):
             self.scale_min, self.scale_max  = f_s_min, f_s_max
         
         # 0610 승호수정 spherical
-        kmeans = faiss.Kmeans(d, int(np.sqrt(f_s.shape[-1]))*keynode_num, niter=niter, verbose=verbose, gpu=True, nredo=10, seed=self.flags.seed, spherical=self.spherical_On)
+        # kmeans = faiss.Kmeans(d, int(np.sqrt(f_s.shape[-1]))*keynode_num, niter=niter, verbose=verbose, gpu=True, nredo=10, seed=self.flags.seed, spherical=self.spherical_On)
+        kmeans = faiss.Kmeans(d, int(np.sqrt(f_s.shape[-1]))*keynode_num, niter=niter, verbose=verbose, gpu=True, nredo=10, seed=self.flags.seed)
         kmeans.train(f_s, values) if self.kmean_weight_On else kmeans.train(f_s) # 질문 학습 전체 배치 한번에 수행하는거 아닌지? (배치단위로 수행한다하지 않았나?)
         
         # 0610 승호수정 spherical

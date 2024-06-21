@@ -73,7 +73,7 @@ def get_dataset(env: gym.Env,
                 returns, episode_index = None, None
             
         elif 'kitchen' in env_name:
-            returns, episode_index = calc_return_to_go_kitchen(dataset)
+            returns, episode_index = calc_return_to_go_kitchen(dataset, flag)
         elif 'calvin' in env_name:
             returns, episode_index = calc_return_to_go_calvin(dataset, flag)
         return Dataset.create(
@@ -86,7 +86,14 @@ def get_dataset(env: gym.Env,
             returns = returns,
             goal_info = goal_info,
             ), episode_index
-            
+
+def kitchen_render(kitchen_env, wh=64):
+    from dm_control.mujoco import engine
+    camera = engine.MovableCamera(kitchen_env.sim, wh, wh)
+    camera.set_pose(distance=1.86, lookat=[-0.3, .5, 2.], azimuth=90, elevation=-60)
+    img = camera.render()
+    return img
+        
 def relabel_ant(env, env_name, dataset, flags):
     observation_pos = dataset['observations'][:, :2]  
     new_rewards = np.zeros_like(dataset['rewards'])  
@@ -299,7 +306,7 @@ def get_rep_observation(encoder_fn, dataset, FLAGS, goal=None):
 
 # 0610 승호수정 goal only
 def get_rep_observation_goal_only(encoder_fn, dataset, FLAGS):
-    mini_batch = 50000
+    mini_batch = 10000
     size = len(dataset['observations']) // mini_batch
     rep_observations = np.zeros((len(dataset['observations']), FLAGS.rep_dim), dtype=np.float32)
     for i in range(size+1):
@@ -308,6 +315,33 @@ def get_rep_observation_goal_only(encoder_fn, dataset, FLAGS):
 
 # 0610 승호수정 spherical
 def get_rep_observation_spherical(encoder_fn, dataset, FLAGS):
+    observations = dataset['observations'].reshape(-1, 1000, dataset['observations'].shape[-1])  # antmaze 기준 (999, 1000, 29)
+    rep_observations = np.zeros((observations.shape[0] * observations.shape[1], FLAGS.rep_dim), dtype=np.float32)
+
+    bases_indx = np.arange(1000)  # 0부터 999까지의 인덱스
+    
+    # 각 트레젝토리에 대해 연산 수행 (배치 처리)
+    for traj_index in range(len(observations)):
+        traj = observations[traj_index]
+        bases=traj[bases_indx]   
+        targets = np.array([traj[min(i + FLAGS.way_steps, 999)] for i in bases_indx])  # targets 배열 생성
+        
+        rep_observations_batch = encoder_fn(bases=bases, targets=targets)
+        rep_observations[traj_index*1000 : traj_index*1000+len(bases_indx)] = rep_observations_batch
+    
+    return rep_observations
+
+# 0620 태건수정 goal only
+def get_rep_observation_goal_only_in_visual(encoder_fn, dataset, FLAGS):
+    mini_batch = 10000
+    size = len(dataset['observations']) // mini_batch
+    rep_observations = np.zeros((len(dataset['observations']), FLAGS.rep_dim), dtype=np.float32)
+    for i in range(size+1):
+        rep_observations[mini_batch*i:mini_batch*(i+1)] = encoder_fn(bases=dataset['observations'][mini_batch*i:mini_batch*(i+1)], targets=dataset['observations'][mini_batch*i:mini_batch*(i+1)])
+    return rep_observations 
+
+# 0620 태건수정 spherical
+def get_rep_observation_spherical_in_visual(encoder_fn, dataset, FLAGS):
     observations = dataset['observations'].reshape(-1, 1000, dataset['observations'].shape[-1])  # antmaze 기준 (999, 1000, 29)
     rep_observations = np.zeros((observations.shape[0] * observations.shape[1], FLAGS.rep_dim), dtype=np.float32)
 

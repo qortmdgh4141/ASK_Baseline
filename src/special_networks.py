@@ -178,16 +178,34 @@ class HierarchicalActorCritic(nn.Module):
     # HIQL
     def value(self, observations, goals, **kwargs):
         if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+            state_reps = get_rep(self.encoders['value_state'], targets=observations)
             goals = get_rep(self.encoders['value_goal'], targets=goals, bases=observations)
-        return self.networks['value'](observations, goals, **kwargs)
+        return self.networks['value'](state_reps, goals, **kwargs)
 
     def target_value(self, observations, goals, **kwargs):
         if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+            state_reps = get_rep(self.encoders['value_state'], targets=observations)
             goals = get_rep(self.encoders['value_goal'], targets=goals, bases=observations)
-        return self.networks['target_value'](observations, goals, **kwargs)
+        return self.networks['target_value'](state_reps, goals, **kwargs)
+    
+    # hierarcy value function
+    def high_value(self, observations, goals, **kwargs):
+        if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+            state_rep = get_rep(self.encoders['value_state'], targets=observations)
+            goals = get_rep(self.encoders['high_value_goal'], targets=goals, bases=observations)
+        return self.networks['high_value'](state_rep, goals, **kwargs)
+
+    def high_target_value(self, observations, goals, **kwargs):
+        if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+            state_rep = get_rep(self.encoders['value_state'], targets=observations)
+            goals = get_rep(self.encoders['high_value_goal'], targets=goals, bases=observations)
+        return self.networks['high_target_value'](state_rep, goals, **kwargs)
 
     def actor(self, observations, goals, low_dim_goals=False, state_rep_grad=True, goal_rep_grad=True, **kwargs):
-        goal_reps = goals
+        state_rep = get_rep(self.encoders['policy_state'], targets=observations)
+        if not state_rep_grad:
+            state_rep = jax.lax.stop_gradient(state_rep)
+        
         if low_dim_goals:
             goal_reps = goals
         else:
@@ -195,14 +213,24 @@ class HierarchicalActorCritic(nn.Module):
                 goal_reps = get_rep(self.encoders['value_goal'], targets=goals, bases=observations)
             if not goal_rep_grad: # goal_rep_grad=False: low actor때는 업데이트 안함.
                 goal_reps = jax.lax.stop_gradient(goal_reps)
-        return self.networks['actor'](jnp.concatenate([observations, goal_reps], axis=-1), **kwargs)
+        return self.networks['actor'](jnp.concatenate([state_rep, goal_reps], axis=-1), **kwargs)
 
     def high_actor(self, observations, goals, state_rep_grad=True, goal_rep_grad=True, **kwargs):
-        goal_reps = goals
-        return self.networks['high_actor'](jnp.concatenate([observations, goal_reps], axis=-1), **kwargs)
+        state_rep = get_rep(self.encoders['high_policy_state'], targets=observations)
+        if not state_rep_grad:
+            state_rep = jax.lax.stop_gradient(state_rep)
+        
+        goal_reps = get_rep(self.encoders['high_policy_goal'], targets=goals, bases=observations)
+        if not goal_rep_grad:
+            goal_reps = jax.lax.stop_gradient(goal_reps)
+        
+        return self.networks['high_actor'](jnp.concatenate([state_rep, goal_reps], axis=-1), **kwargs)
 
     def value_goal_encoder(self, targets, bases, **kwargs):
         return get_rep(self.encoders['value_goal'], targets=targets, bases=bases)
+    
+    def high_value_goal_encoder(self, targets, bases, **kwargs):
+        return get_rep(self.encoders['high_value_goal'], targets=targets, bases=bases)
 
     def policy_goal_encoder(self, targets, goals, **kwargs):
         assert not self.use_waypoints
@@ -229,6 +257,8 @@ class HierarchicalActorCritic(nn.Module):
     def __call__(self, observations=None, goals=None, latent=None):
         if self.flag.use_rep == "hiql_goal_encoder":
             rets = {
+                'high_value_goal_encoder' : self.high_value_goal_encoder(observations, goals), 
+                'value_goal_encoder' : self.value_goal_encoder(observations, goals), 
                 'value': self.value(observations, goals),
                 'target_value': self.target_value(observations, goals),
                 'actor': self.actor(observations, goals),
@@ -266,4 +296,20 @@ class HierarchicalActorCritic(nn.Module):
                 'actor': self.actor(observations, goals),
                 'high_actor': self.high_actor(observations, goals),
             }
+        
+        else:
+            rets = {
+                # 'vae_state_encoder' : self.vae_state_encoder(base_observations), 
+                # 'vae_state_decoder' : self.vae_state_decoder(latent), 
+                'value': self.value(observations, goals),
+                'target_value': self.target_value(observations, goals),
+                'actor': self.actor(observations, goals),
+                'high_actor': self.high_actor(observations, goals),
+            }
+            
+        if self.flag.value_function_num =="hierarchy":
+            rets['high_value_goal_encoder'] =  self.high_value_goal_encoder(observations, goals)
+            rets['high_value'] =  self.high_value(observations, goals)
+            rets['high_target_value'] =  self.high_target_value(observations, goals)
+                                
         return rets

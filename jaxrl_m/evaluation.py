@@ -48,8 +48,27 @@ def kitchen_render(kitchen_env, wh=64):
     img = camera.render()
     return img
 
+def env_step(env_name, env, action):
+    if 'antmaze' in env_name:
+        next_observation, reward, done, info = env.step(action)
+    elif 'kitchen' in env_name:
+        next_observation, reward, done, info = env.step(action)
+        if 'visual' in env_name:
+            next_observation = kitchen_render(env)
+        else:
+            next_observation = next_observation[:30]
+    elif 'calvin' in env_name:
+        next_observation, reward, done, info = env.step({'ac': np.array(action)})
+        next_observation = next_observation['ob']
+        del info['robot_info']
+        del info['scene_info']
+    else:
+        raise NotImplementedError
+    
+    return next_observation, reward, done, info
+
 def evaluate_with_trajectories(
-        policy_fn, high_policy_fn, encoder_fn, decoder_fn, value_goal_fn, env: gym.Env, env_name, num_episodes: int, base_observation=None, num_video_episodes=0,
+        policy_fn, high_policy_fn, encoder_fn, decoder_fn, value_goal_fn, env: gym.Env, env_name, num_episodes: int, base_observation=None, goal_info=None, num_video_episodes=0,
         eval_temperature=0, epsilon=0, 
         config=None, find_key_node = None, FLAGS = None
 ) -> Dict[str, float]:
@@ -69,9 +88,14 @@ def evaluate_with_trajectories(
             node_dim = np.arange(2)
             interval, min_dist = 10, 4
         elif 'kitchen' in env_name:
-            observation, obs_goal = observation[:30], observation[30:]
-            obs_goal[:9] = base_observation[:9]
-            node_dim = np.arange(9)
+            if 'visual' in env_name:
+                observation = kitchen_render(env)
+                obs_goal = goal_info['ob']
+            else:
+                observation, obs_goal = observation[:30], observation[30:]
+                obs_goal[:9] = base_observation[:9]
+                node_dim = np.arange(9)
+                
             interval, min_dist = 6, 3.0
         elif 'calvin' in env_name:
             observation = observation['ob']
@@ -155,16 +179,19 @@ def evaluate_with_trajectories(
             cur_obs_goal_rep = cur_obs_goal                
             action = policy_fn(observations=observation, goals=cur_obs_goal_rep, low_dim_goals=True, temperature=eval_temperature)
             
-            if 'antmaze' in env_name:
-                next_observation, r, done, info = env.step(action)
-            elif 'kitchen' in env_name:
-                next_observation, r, done, info = env.step(action)
-                next_observation = next_observation[:30]
-            elif 'calvin' in env_name:
-                next_observation, r, done, info = env.step({'ac': np.array(action)})
-                next_observation = next_observation['ob']
-                del info['robot_info']
-                del info['scene_info']
+            
+            next_observation, reward, done, info = env_step(env_name, env, action)
+            
+            # if 'antmaze' in env_name:
+            #     next_observation, r, done, info = env.step(action)
+            # elif 'kitchen' in env_name:
+            #     next_observation, r, done, info = env.step(action)
+            #     next_observation = next_observation[:30]
+            # elif 'calvin' in env_name:
+            #     next_observation, r, done, info = env.step({'ac': np.array(action)})
+            #     next_observation = next_observation['ob']
+            #     del info['robot_info']
+            #     del info['scene_info']
 
             step += 1
 
@@ -175,7 +202,7 @@ def evaluate_with_trajectories(
                 observation=observation,
                 next_observation=next_observation,
                 action=action,
-                reward=r,
+                reward=reward,
                 done=done,
                 info=info,
             )
