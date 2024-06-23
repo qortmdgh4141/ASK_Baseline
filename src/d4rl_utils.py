@@ -338,7 +338,7 @@ def get_rep_observation_goal_only_in_visual(encoder_fn, dataset, FLAGS):
     rep_observations = np.zeros((len(dataset['observations']), FLAGS.rep_dim), dtype=np.float32)
     for i in range(size+1):
         rep_observations[mini_batch*i:mini_batch*(i+1)] = encoder_fn(bases=dataset['observations'][mini_batch*i:mini_batch*(i+1)], targets=dataset['observations'][mini_batch*i:mini_batch*(i+1)])
-    return rep_observations 
+    return np.array(rep_observations, dtype=np.float32) 
 
 # 0620 태건수정 spherical
 def get_rep_observation_spherical_in_visual(encoder_fn, dataset, FLAGS):

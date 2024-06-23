@@ -499,7 +499,7 @@ def create_learner(
         rep_dim: int = 10,
         use_layer_norm: int = 1,
         visual: int = 0,
-        encoder: str = 'impala', # 'impala_small'
+        encoder: str = 'impala_small', # 'impala_small'
         key_nodes : Any = None,
         flag : Any =None,
         **kwargs):

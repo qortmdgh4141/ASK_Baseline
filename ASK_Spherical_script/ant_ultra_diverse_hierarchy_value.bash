@@ -13,9 +13,9 @@ project="ant-ultra"
 
 extra_name="hiql_hierarchy"
 
-gpu="0"
+gpu="1"
 start=0
-end_=0
+end_=3
 
 value_function_num='hierarchy' # 'flat', 'hierarchy'
 

@@ -3,8 +3,8 @@ import sys
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false" 
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-gpu_index = sys.argv[sys.argv.index('--gpu') + 1] if '--gpu' in sys.argv else "1" # Default to GPU 0 if no --gpu argument
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+gpu_index = sys.argv[sys.argv.index('--gpu') + 1] if '--gpu' in sys.argv else "2" # Default to GPU 0 if no --gpu argument
 os.environ['CUDA_VISIBLE_DEVICES'] = gpu_index
 print("Using GPU: ", gpu_index)
 project = sys.argv[sys.argv.index('--project') + 1] if '--project' in sys.argv else "test" 
@@ -20,6 +20,7 @@ import datetime
 import numpy as np
 import jax.numpy as jnp
 import tensorflow as tf
+tf.config.optimizer.set_jit(True) 
 
 from absl import app, flags
 from functools import partial
@@ -34,7 +35,7 @@ from jaxrl_m.evaluation import supply_rng, evaluate_with_trajectories, EpisodeMo
 FLAGS = flags.FLAGS
 flags.DEFINE_string('save_dir', f'experiment_output/', '')
 flags.DEFINE_string('run_group', 'EXP', '')
-flags.DEFINE_string('env_name', 'visual-kitchen-mixed-v0', '')
+flags.DEFINE_string('env_name', 'antmaze-ultra-diverse-v0', '')
 # flags.DEFINE_string('env_name', 'antmaze-ultra-diverse-v0', '')
 flags.DEFINE_string('project', 'test', '')
 flags.DEFINE_string('algo_name', None, '')
@@ -63,7 +64,7 @@ flags.DEFINE_float('high_temperature', 1, '')
 flags.DEFINE_float('pretrain_expectile', 0.7, '')
 flags.DEFINE_float('temperature', 1, '')
 flags.DEFINE_float('discount', 0.99, '')
-flags.DEFINE_integer('visual', 1, '')
+flags.DEFINE_integer('visual', 0, '')
 
 flags.DEFINE_float('sparse_data', 0, '') # 100% setting : 0, 30% setting : -7, 10% setting : -9
 flags.DEFINE_integer('expert_data_On', 0, '') # 현재 kitchen (reward >= 3), calvin (reward >= 4)만 적용
@@ -80,7 +81,7 @@ flags.DEFINE_integer('use_goal_info_On', 0, '')
 flags.DEFINE_string('kmean_weight_type', 'rtg_uniform', '')  # ['rtg_discount', 'rtg_uniform', "hilbert_td"]
 flags.DEFINE_integer('specific_dim_On', 0, '')
 flags.DEFINE_float('keynode_ratio', 0.0, '')
-flags.DEFINE_integer('use_keynode_in_eval_On', 0, '')
+flags.DEFINE_integer('use_keynode_in_eval_On', 1, '')
 
 flags.DEFINE_integer('relative_dist_in_eval_On', 0, '')
 flags.DEFINE_string('mapping_method', 'nearest', '') # nearest, triple, center
@@ -95,9 +96,10 @@ flags.DEFINE_float('vae_kl_coe', 0.0, '')
 flags.DEFINE_string('rep_type', 'state', '') # 'state' / 'concat'
 # 0610 승호수정 spherical
 flags.DEFINE_float('spherical_On', 0.0, '') # 0:Euclidean Distance // 1: Cosine Similarity
-flags.DEFINE_float('mapping_threshold', 0.0, '')
+flags.DEFINE_float('mapping_threshold', 0, '')
 
-flags.DEFINE_string('value_function_num', 'float', '') # 'float' / 'hierarchy'
+flags.DEFINE_string('value_function_num', 'hierarchy', '') # 'float' / 'hierarchy'
+flags.DEFINE_string('low_dim_clustering', '', '') #[tsne_dim, pca_dim, ''] ex) hilp_2 : hilp - 2dim, pca_2 : pca - 2dim
 
 
 wandb_config = default_wandb_config()
@@ -436,17 +438,17 @@ def main(_):
     
     if 'antmaze' in env_name:
         goal = env.wrapped_env.target_goal
-        obs_goal = base_observation.copy()
-        obs_goal[:2] = goal
+        goal_info = base_observation.copy()
+        goal_info[:2] = goal
     elif 'kitchen' in env_name:
         if 'visual' not in env_name:
-            observation, obs_goal = observation[:30].copy(), observation[30:].copy()
-            obs_goal[:9] = base_observation[:9]
+            observation, goal_info = observation[:30].copy(), observation[30:].copy()
+            goal_info[:9] = base_observation[:9]
     elif 'calvin' in env_name:
         observation = observation['ob']
         goal = np.array([0.25, 0.15, 0, 0.088, 1, 1])
-        obs_goal = base_observation.copy()
-        obs_goal[15:21] = goal
+        goal_info = base_observation.copy()
+        goal_info[15:21] = goal
     
     train_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'train.csv'))
     eval_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'eval.csv'))
@@ -504,7 +506,7 @@ def main(_):
                 pretrain_dataset = GCSDataset(dataset, find_key_node = find_key_node, **FLAGS.gcdataset.to_dict())
             
             eval_episodes = 1 if i == 1 else FLAGS.eval_episodes
-            num_video_episodes = 10 if i == 1 else FLAGS.num_video_episodes
+            num_video_episodes = 0 if i == 1 else FLAGS.num_video_episodes
             
             policy_fn = partial(supply_rng(agent.sample_actions))
             high_policy_fn = partial(supply_rng(agent.sample_high_actions))
@@ -528,6 +530,7 @@ def main(_):
                     eval_temperature=0,
                     config=FLAGS.config,
                     find_key_node=find_key_node,
+                    key_nodes=key_nodes,
                     FLAGS=FLAGS
                 )
             

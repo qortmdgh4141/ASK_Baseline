@@ -6,6 +6,8 @@ from collections import defaultdict
 import time
 import tqdm
 import jax.numpy as jnp
+from time import time as t
+from dm_control.mujoco import engine
 
 def supply_rng(f, rng=jax.random.PRNGKey(0)):
     """
@@ -42,7 +44,6 @@ def add_to(dict_of_lists, single_dict):
         dict_of_lists[k].append(v)
 
 def kitchen_render(kitchen_env, wh=64):
-    from dm_control.mujoco import engine
     camera = engine.MovableCamera(kitchen_env.sim, wh, wh)
     camera.set_pose(distance=1.8, lookat=[-0.3, .5, 2.], azimuth=90, elevation=-60)
     img = camera.render()
@@ -54,6 +55,7 @@ def env_step(env_name, env, action):
     elif 'kitchen' in env_name:
         next_observation, reward, done, info = env.step(action)
         if 'visual' in env_name:
+            
             next_observation = kitchen_render(env)
         else:
             next_observation = next_observation[:30]
@@ -67,16 +69,26 @@ def env_step(env_name, env, action):
     
     return next_observation, reward, done, info
 
+def convert_input_to_low_dim(flags, key_nodes, input_obs):
+    if 'tsne' in flags.low_dim_clustering: 
+        low_dim_input_obs = key_nodes.tsne.transform(input_obs.reshape(1,-1))[0]
+        low_dim_input_obs = np.array(low_dim_input_obs)
+    elif 'pca' in flags.low_dim_clustering: 
+        low_dim_input_obs = key_nodes.pca.apply(input_obs)
+    
+    return low_dim_input_obs
+    
 def evaluate_with_trajectories(
         policy_fn, high_policy_fn, encoder_fn, decoder_fn, value_goal_fn, env: gym.Env, env_name, num_episodes: int, base_observation=None, goal_info=None, num_video_episodes=0,
         eval_temperature=0, epsilon=0, 
-        config=None, find_key_node = None, FLAGS = None
+        config=None, find_key_node = None, key_nodes=None, FLAGS=None
 ) -> Dict[str, float]:
     trajectories = []
     stats = defaultdict(list)
 
     renders = []
     rep_trajectories = []
+    from time import time as t
     for i in tqdm.tqdm(range(num_episodes + num_video_episodes), desc="evaluate_with_trajectories"):
         trajectory = defaultdict(list)
         observation, done = env.reset(), False
@@ -123,13 +135,12 @@ def evaluate_with_trajectories(
             obs_goal,_ ,_ = encoder_fn(observation=obs_goal)
         elif FLAGS.use_rep in ["hilp_subgoal_encoder", "hilp_encoder"]:
             obs_goal =  encoder_fn(observations=jnp.expand_dims(obs_goal, axis=0))[0]
-            
+        
         while not done:
             if FLAGS.use_rep == "vae_encoder" :
                 observation,_ ,_ = encoder_fn(observation=observation)
             elif FLAGS.use_rep == "hilp_encoder" :
                 observation =  encoder_fn(observations=jnp.expand_dims(observation, axis=0))[0]
-                
             if h_step == interval or dist < init_dist * 0.5:
                 cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=eval_temperature)
                 if FLAGS.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
@@ -150,8 +161,10 @@ def evaluate_with_trajectories(
                     else:   
                         cur_obs_delta = value_goal_fn(bases=observation, targets=obs_goal)
                     init_dist = np.linalg.norm(cur_obs_subgoal - cur_obs_delta)
-                    
                 cur_obs_goal = cur_obs_sub_goal = cur_obs_subgoal 
+                
+                if FLAGS.low_dim_clustering:
+                    cur_obs_sub_goal = convert_input_to_low_dim(FLAGS, key_nodes, cur_obs_sub_goal)
                 h_step = 0
             
             if FLAGS.use_rep =="hilp_encoder":
@@ -163,25 +176,23 @@ def evaluate_with_trajectories(
                 dist = np.linalg.norm(cur_obs_goal - cur_obs_delta) # "cur_obs_goal - cur_obs_delta" => "이전에 생성한 subgoal 위치(변화량) - 현재 obs 위치(변화량)"
             else:
                 dist = np.linalg.norm(cur_obs_goal[node_dim] - observation[node_dim])
-                                       
             h_step +=1
             h_steps.append(h_step)
             dists.append(dist)
         
             if config['use_keynode_in_eval_On']:
+
                 cos_distance, _, _, cur_obs_key_node = find_key_node(cur_obs_sub_goal)
                 if cos_distance >= FLAGS.mapping_threshold:
                     diff_sub_goal_node = np.linalg.norm(cur_obs_key_node - cur_obs_sub_goal, axis=-1, keepdims=True)
                     diff_sub_goal_nodes.append(diff_sub_goal_node)
                     cur_obs_goal = cur_obs_key_node  
                 cos_distances.append(cos_distance)
-    
+
             cur_obs_goal_rep = cur_obs_goal                
             action = policy_fn(observations=observation, goals=cur_obs_goal_rep, low_dim_goals=True, temperature=eval_temperature)
             
-            
             next_observation, reward, done, info = env_step(env_name, env, action)
-            
             # if 'antmaze' in env_name:
             #     next_observation, r, done, info = env.step(action)
             # elif 'kitchen' in env_name:
@@ -209,7 +220,6 @@ def evaluate_with_trajectories(
             add_to(trajectory, transition)
             add_to(stats, flatten(info))
             observation = next_observation
-            
             # Render
             if i >= num_episodes and step % 3 == 0:
                 if FLAGS.use_rep in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"] and FLAGS.relative_dist_in_eval_On:
@@ -245,7 +255,6 @@ def evaluate_with_trajectories(
             renders.append(np.array(render))
             if FLAGS.use_rep in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"] and FLAGS.relative_dist_in_eval_On:
                 rep_trajectories.append(cur_obs_delta)
-
     for k, v in stats.items():
         stats[k] = np.mean(v)
     

@@ -74,13 +74,56 @@ class KeyNode(object):
         self.find_nodes = jax.jit(jax.vmap(self.find_node_pos))
         self.find_node = jax.jit(self.find_node_pos)        
 
+    def low_dim_convert(self, rep_observations):
+        target_obs = rep_observations if rep_observations is not None else self.f_s
+        
+        import time
+        s = time.time()
+        target_dim = int(self.flags.low_dim_clustering[-1])
+        print(f'{target_dim=} dim')
+        
+        if 'tsne' in self.flags.low_dim_clustering:
+            # from tsnecuda import TSNE
+            # from sklearn.manifold import TSNE
+            from openTSNE import TSNE
+            self.tsne = TSNE(verbose=True)
+            target_obs_index = np.random.choice(len(target_obs), len(target_obs)//100)
+            self.values = self.values[:len(self.values)//100] if target_obs_index.shape[0] != self.values.shape[0] else self.values
+            self.tsne = self.tsne.fit(target_obs[target_obs_index])
+            low_dim_target_obs = np.ascontiguousarray(self.tsne).astype(np.float32)
+            
+            
+            
+        elif 'pca' in self.flags.low_dim_clustering:
+            from faiss import PCAMatrix
+            self.pca = PCAMatrix(target_obs.shape[-1], target_dim)
+            self.pca.train(target_obs)
+            low_dim_target_obs = self.pca.apply(target_obs)
+            low_dim_target_obs = np.ascontiguousarray(low_dim_target_obs)
+            
+        print(f'convert low dim time : {time.time() - s:3f} s')
+            
+        if rep_observations is not None:
+            self.rep_f_s = low_dim_target_obs 
+        else:
+            self.f_s = low_dim_target_obs
+        
+
     def construct_nodes(self, rep_observations=None, spherical_On=0.0):
+        
+        if self.flags.low_dim_clustering:
+            # self.f_s 또는 self.rep_f_s를 내부에서 수정함 
+            # pca or tsne로 low dim으로 변환
+            self.low_dim_convert(rep_observations)
+        else:
+            self.rep_f_s = rep_observations
+        
         if rep_observations is None:
             # 0610 승호수정 spherical
             self.reduced_f_s, self.weighted_values, self.labels = self.sparse_node(f_s=self.f_s, values=self.values, keynode_num=self.keynode_num, spherical_On=spherical_On)
             self.graph = self.create_nodes(reduced_f_s=self.reduced_f_s, weighted_values=self.weighted_values)
         else:
-            self.rep_f_s = np.array(rep_observations) 
+            # self.rep_f_s = np.array(rep_observations) 
             # 0610 승호수정 spherical
             self.rep_reduced_f_s, self.rep_weighted_values, self.rep_labels = self.sparse_node(f_s=self.rep_f_s, values=self.values, keynode_num = self.keynode_num, spherical_On=spherical_On)
             self.graph = self.create_nodes(reduced_f_s=self.rep_reduced_f_s, weighted_values=self.rep_weighted_values)
@@ -97,7 +140,9 @@ class KeyNode(object):
         # 0610 승호수정 spherical
         self.spherical_On = bool(spherical_On) 
         if self.spherical_On:
-            f_s = f_s / jnp.sqrt(d)
+            f_s = f_s / np.sqrt(d)
+        elif self.flags.low_dim_clustering:
+            pass
         else:
             f_s_max, f_s_min = np.max(f_s, axis=0),  np.min(f_s, axis=0)
             f_s = (f_s - f_s_min) / (f_s_max - f_s_min)
@@ -109,7 +154,7 @@ class KeyNode(object):
         kmeans.train(f_s, values) if self.kmean_weight_On else kmeans.train(f_s) # 질문 학습 전체 배치 한번에 수행하는거 아닌지? (배치단위로 수행한다하지 않았나?)
         
         # 0610 승호수정 spherical
-        if self.spherical_On:
+        if self.spherical_On or self.flags.low_dim_clustering:
             initial_centroid = kmeans.centroids 
         else:
             normalized_centroid = kmeans.centroids
@@ -129,6 +174,8 @@ class KeyNode(object):
         # 0610 승호수정 spherical
         if self.spherical_On:
             reduced_f_s = reduced_f_s * np.sqrt(d) # reduced_f_s 원래 스케일로 복원
+        elif self.flags.low_dim_clustering:
+            pass
         else:
             reduced_f_s = reduced_f_s * (f_s_max - f_s_min) + f_s_min # reduced_f_s 원래 스케일로 복원
         
@@ -169,12 +216,16 @@ class KeyNode(object):
         
         return graph    
     
+
+    
     def find_node_pos(self, input_obs):
         node_dim = self.flags.keynode_dim # rep 은 모든 dim 사용
         
         # 0610 승호수정 spherical
         if self.spherical_On:
             input_pos = input_obs / jnp.sqrt(node_dim)
+        elif self.flags.low_dim_clustering:
+            input_pos = input_obs
         else:
             input_pos = (input_obs - self.scale_min) / (self.scale_max - self.scale_min)       
              
