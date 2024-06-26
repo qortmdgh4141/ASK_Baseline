@@ -27,13 +27,13 @@ from functools import partial
 from src.agents import ask as learner
 from src.gc_dataset import GCSDataset
 from ml_collections import config_flags
-from src.utils import record_video, CsvLogger
+from src.utils import record_video, CsvLogger, plot_value_map
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
 from src import d4rl_utils, d4rl_ant, ant_diagnostics, viz_utils, keynode_utils
 from jaxrl_m.evaluation import supply_rng, evaluate_with_trajectories, EpisodeMonitor
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('save_dir', f'experiment_output/', '')
+flags.DEFINE_string('save_dir', f'/home/spectrum/study/experiment_output/', '')
 flags.DEFINE_string('run_group', 'EXP', '')
 flags.DEFINE_string('env_name', 'antmaze-ultra-diverse-v0', '')
 # flags.DEFINE_string('env_name', 'antmaze-ultra-diverse-v0', '')
@@ -44,16 +44,18 @@ flags.DEFINE_integer('gpu', 0, '')
 flags.DEFINE_integer('seed', 0, '')
 flags.DEFINE_integer('batch_size', 1024, '')
 flags.DEFINE_integer('pretrain_steps', 500002, '')
-flags.DEFINE_integer('eval_interval', 10000, '')
+flags.DEFINE_integer('eval_interval', 1000, '')
 flags.DEFINE_integer('save_interval', 100000, '')
 flags.DEFINE_integer('log_interval', 1000, '')
-flags.DEFINE_integer('eval_episodes', 10, '')
-flags.DEFINE_integer('num_video_episodes', 20, '')
+flags.DEFINE_integer('eval_episodes', 1, '')
+flags.DEFINE_integer('num_video_episodes', 2, '')
 
 flags.DEFINE_integer('way_steps', 35, '')
 flags.DEFINE_integer('use_layer_norm', 1, '')
 flags.DEFINE_integer('value_hidden_dim', 512, '')
 flags.DEFINE_integer('value_num_layers', 3, '')
+flags.DEFINE_integer('actor_hidden_dim', 256, '')
+flags.DEFINE_integer('actor_num_layers', 3, '')
 flags.DEFINE_integer('geom_sample', 1, '')
 
 flags.DEFINE_float('p_randomgoal', 0.3, '')
@@ -65,11 +67,12 @@ flags.DEFINE_float('pretrain_expectile', 0.7, '')
 flags.DEFINE_float('temperature', 1, '')
 flags.DEFINE_float('discount', 0.99, '')
 flags.DEFINE_integer('visual', 0, '')
+flags.DEFINE_float('p_aug', 0, '')
 
 flags.DEFINE_float('sparse_data', 0, '') # 100% setting : 0, 30% setting : -7, 10% setting : -9
 flags.DEFINE_integer('expert_data_On', 0, '') # 현재 kitchen (reward >= 3), calvin (reward >= 4)만 적용
 
-flags.DEFINE_string('use_rep', 'hiql_goal_encoder', '') # ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]
+flags.DEFINE_string('use_rep', '0', '') # ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]
 flags.DEFINE_integer('rep_normalizing_On', 1, '') # 0: rep_norm 제거 // 1: rep_norm 사용
 flags.DEFINE_integer('rep_dim', 10, '')
 flags.DEFINE_integer('keynode_dim', 10, '')
@@ -81,7 +84,7 @@ flags.DEFINE_integer('use_goal_info_On', 0, '')
 flags.DEFINE_string('kmean_weight_type', 'rtg_uniform', '')  # ['rtg_discount', 'rtg_uniform', "hilbert_td"]
 flags.DEFINE_integer('specific_dim_On', 0, '')
 flags.DEFINE_float('keynode_ratio', 0.0, '')
-flags.DEFINE_integer('use_keynode_in_eval_On', 1, '')
+flags.DEFINE_integer('use_keynode_in_eval_On', 0, '')
 
 flags.DEFINE_integer('relative_dist_in_eval_On', 0, '')
 flags.DEFINE_string('mapping_method', 'nearest', '') # nearest, triple, center
@@ -95,11 +98,12 @@ flags.DEFINE_float('vae_kl_coe', 0.0, '')
 # 0610 승호수정 goal only
 flags.DEFINE_string('rep_type', 'state', '') # 'state' / 'concat'
 # 0610 승호수정 spherical
-flags.DEFINE_float('spherical_On', 0.0, '') # 0:Euclidean Distance // 1: Cosine Similarity
+flags.DEFINE_float('spherical_On', 0, '') # 0:Euclidean Distance // 1: Cosine Similarity
 flags.DEFINE_float('mapping_threshold', 0, '')
 
-flags.DEFINE_string('value_function_num', 'hierarchy', '') # 'float' / 'hierarchy'
+flags.DEFINE_string('value_function_num', 'flat', '') # 'flat' / 'hierarchy'
 flags.DEFINE_string('low_dim_clustering', '', '') #[tsne_dim, pca_dim, ''] ex) hilp_2 : hilp - 2dim, pca_2 : pca - 2dim
+flags.DEFINE_float('pseudo_obs', 10, '') #
 
 
 wandb_config = default_wandb_config()
@@ -170,6 +174,10 @@ def get_traj_v(agent, trajectory):
         rep_observations = agent.network(observations, method='hilp_phi')    
         all_values = jax.vmap(jax.vmap(get_v, in_axes=(None, 0)), in_axes=(0, None))(observations, rep_observations)
     
+    else:
+        all_values = jax.vmap(jax.vmap(get_v, in_axes=(None, 0)), in_axes=(
+        0, None))(observations, observations)
+    
     return {
         'dist_to_beginning': all_values[:, 0],
         'dist_to_end': all_values[:, -1],
@@ -191,6 +199,10 @@ def main(_):
     if 'SLURM_RESTART_COUNT' in os.environ:
         exp_name += f'rs_{os.environ["SLURM_RESTART_COUNT"]}.'
         
+    if 'visual' in FLAGS.env_name:
+        FLAGS.visual = 1
+        FLAGS.p_aug = 0.5
+        
     if FLAGS.visual:
         FLAGS.batch_size = 256
 
@@ -204,6 +216,8 @@ def main(_):
     
     FLAGS.gcdataset['keynode_ratio'] = FLAGS.keynode_ratio
     FLAGS.gcdataset['hierarchy'] = FLAGS.value_function_num
+    FLAGS.gcdataset['pseudo_obs'] = FLAGS.pseudo_obs
+    FLAGS.gcdataset['fetch_env'] = True if 'Fetch' in FLAGS.env_name else False
   
     FLAGS.config['env_name'] = FLAGS.env_name
     FLAGS.config['pretrain_expectile'] = FLAGS.pretrain_expectile
@@ -212,7 +226,14 @@ def main(_):
     FLAGS.config['discount'] = FLAGS.discount
     FLAGS.config['way_steps'] = FLAGS.way_steps
     FLAGS.config['value_hidden_dims'] = (FLAGS.value_hidden_dim,) * FLAGS.value_num_layers
-    
+    if FLAGS.visual:
+        FLAGS.actor_hidden_dim = 512
+        FLAGS.actor_num_layers = 3
+        assert FLAGS.use_rep != '0'
+    else:
+        FLAGS.actor_hidden_dim = 256
+        FLAGS.actor_num_layers = 2
+    FLAGS.config['actor_hidden_dims'] = (FLAGS.actor_hidden_dim,) * FLAGS.actor_num_layers
     
     FLAGS.config['sparse_data'] = FLAGS.sparse_data
     FLAGS.config['build_keynode_time'] = FLAGS.build_keynode_time
@@ -225,6 +246,7 @@ def main(_):
     FLAGS.config['vae_recon_coe'] = FLAGS.vae_recon_coe
 
     FLAGS.config['value_function_num'] = FLAGS.value_function_num
+    FLAGS.config['pseudo_obs'] = FLAGS.pseudo_obs
     # Create wandb logger
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
     FLAGS.wandb['name'] = FLAGS.wandb['exp_descriptor'] = exp_name   
@@ -353,16 +375,41 @@ def main(_):
         for key in ds[0].keys():
             dataset[key] = np.concatenate([d[key] for d in ds], axis=0)
         dataset, episode_index = d4rl_utils.get_dataset(env, FLAGS.env_name, dataset=dataset, flags=FLAGS)
+    elif 'Fetch' in FLAGS.env_name:
+        import gymnasium as gym
+        from src.envs.fetch import fetch_load, FetchGoalWrapper
+        
+        env = gym.make(FLAGS.env_name, render_mode='rgb_array',  max_episode_steps=200)
+        env.reset(seed=FLAGS.seed)
+        env = FetchGoalWrapper(env)
+        env = EpisodeMonitor(env)
+        
+        data_folder = FLAGS.env_name.split('-')[0]
+        dataset_file = os.path.join(f'/home/spectrum/study/ASK_Baseline/data/mixed/{data_folder}/buffer.pkl')
+        with open(dataset_file, 'rb') as f:
+            dataset = pickle.load(f)
+        
+        dataset, episode_index = fetch_load(FLAGS.env_name, dataset)
+        # dataset, episode_index = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
+        
     else:
         raise NotImplementedError
 
     total_steps = FLAGS.pretrain_steps
     example_observation = dataset['observations'][0, np.newaxis]
     example_action = dataset['actions'][0, np.newaxis]
+    if 'Fetch' in FLAGS.env_name:
+        example_goals = dataset['goal_info'][0, np.newaxis]
+    else:
+        example_goals = example_observation
+        
 
     agent = learner.create_learner(FLAGS.seed,
                                    example_observation,
+                                   example_goals,
                                    example_action,
+                                #    value_hidden_dims=FLAGS.config['value_hidden_dims'],
+                                #    action_hidden_dims=FLAGS.config['actor_hidden_dims'],
                                    use_layer_norm=FLAGS.use_layer_norm,
                                    visual=FLAGS.visual,
                                    flag=FLAGS,
@@ -430,6 +477,8 @@ def main(_):
         example_trajectory = pretrain_dataset.sample(50, indx=np.arange(0, 50))
     elif 'calvin' in FLAGS.env_name:
         example_trajectory = pretrain_dataset.sample(50, indx=np.arange(0, 50))
+    elif 'Fetch' in FLAGS.env_name:
+        example_trajectory = pretrain_dataset.sample(50, indx=np.arange(0, 50))
     else:
         raise NotImplementedError
 
@@ -449,11 +498,22 @@ def main(_):
         goal = np.array([0.25, 0.15, 0, 0.088, 1, 1])
         goal_info = base_observation.copy()
         goal_info[15:21] = goal
+    elif 'Fetch' in env_name:
+        state, _  = env.reset()
+        base_observation, goal_info = state['observation'], state['desired_goal']
+    else:
+        raise NotImplementedError
     
     train_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'train.csv'))
     eval_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'eval.csv'))
     first_time = time.time()
     last_time = time.time()
+
+    debug = False
+    if debug:
+        model_path = '/home/spectrum/study/ASK_Baseline/ASK_Spherical_script/experiment_output/ant_ultra_diverse_hiql_06-25_09:55/antmaze-ultra-diverse-v0_sd000_06-25_09-55/params_200000.pkl'
+        plot_value_map(agent, base_observation, goal_info, model_path)
+        
 
     for i in tqdm.tqdm(range(1, total_steps + 1),
                    desc="main_train",
@@ -491,11 +551,11 @@ def main(_):
                     rep_observations = d4rl_utils.get_rep_observation_spherical(encoder_fn, dataset, FLAGS)
                 elif FLAGS.rep_type == 'state':
                     rep_observations = d4rl_utils.get_rep_observation_goal_only(encoder_fn, dataset, FLAGS)
-        
-            if FLAGS.kmean_weight_type == 'hilbert_td' :
-                dataset = d4rl_utils.hilp_add_data(dataset, rep_observations)
-            elif FLAGS.kmean_weight_type in ['rtg_discount', 'rtg_uniform']:
-                dataset = d4rl_utils.add_data(dataset, rep_observations)
+            elif FLAGS.use_rep != '0':
+                if FLAGS.kmean_weight_type == 'hilbert_td' :
+                    dataset = d4rl_utils.hilp_add_data(dataset, rep_observations)
+                elif FLAGS.kmean_weight_type in ['rtg_discount', 'rtg_uniform']:
+                    dataset = d4rl_utils.add_data(dataset, rep_observations)
                     
             if FLAGS.use_rep in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder"]:
                 # key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index= episode_index)
@@ -533,17 +593,20 @@ def main(_):
                     key_nodes=key_nodes,
                     FLAGS=FLAGS
                 )
+            value_map = plot_value_map(agent, base_observation, goal_info, i, g_start_time)
             
             eval_metrics = {f'evaluation/{k}': v for k, v in eval_info.items()}
+            eval_metrics['value_map'] = wandb.Image(value_map)
+            
             if FLAGS.num_video_episodes > 0 and len(renders):
                 video = record_video('Video', i, renders=renders)
                 eval_metrics['video'] = video
-            traj_metrics = get_traj_v(agent, example_trajectory)
-            value_viz = viz_utils.make_visual_no_image(
-                traj_metrics,
-                [partial(viz_utils.visualize_metric, metric_name=k) for k in traj_metrics.keys()]
-            )
-            eval_metrics['value_traj_viz'] = wandb.Image(value_viz)
+            # traj_metrics = get_traj_v(agent, example_trajectory)
+            # value_viz = viz_utils.make_visual_no_image(
+            #     traj_metrics,
+            #     [partial(viz_utils.visualize_metric, metric_name=k) for k in traj_metrics.keys()]
+            # )
+            # eval_metrics['value_traj_viz'] = wandb.Image(value_viz)
             if 'antmaze' in FLAGS.env_name and 'large' in FLAGS.env_name and FLAGS.env_name.startswith('antmaze'):
                 traj_image = d4rl_ant.trajectory_image(viz_env, viz_dataset, trajs)
                 eval_metrics['trajectories'] = wandb.Image(traj_image)
@@ -562,19 +625,22 @@ def main(_):
                 config=FLAGS.config.to_dict()
             )
             if i == 1 or i % FLAGS.save_interval == 0:
-                rep_trajectory_fname = os.path.join(FLAGS.save_dir, f'rep_trajectories_{i}.pkl')
-                with open(rep_trajectory_fname, 'wb') as f:
-                    pickle.dump(np.array(rep_trajectories), f)
-                all_state_fname = os.path.join(FLAGS.save_dir, f'all_state_{i}.pkl')
-                with open(all_state_fname, 'wb') as f:
-                    pickle.dump(np.array(rep_observations), f)
+                if FLAGS.use_rep !='0':
+                    rep_trajectory_fname = os.path.join(FLAGS.save_dir, f'rep_trajectories_{i}.pkl')
+                    with open(rep_trajectory_fname, 'wb') as f:
+                        pickle.dump(np.array(rep_trajectories), f)
+                    all_state_fname = os.path.join(FLAGS.save_dir, f'all_state_{i}.pkl')
+                    with open(all_state_fname, 'wb') as f:
+                        pickle.dump(np.array(rep_observations), f)
+
+                if FLAGS.spherical_On:
+                    cos_distances_path = os.path.join(FLAGS.save_dir, f'cos_distances_{i}.pkl')
+                    with open(cos_distances_path, 'wb') as f:
+                        pickle.dump(np.array(cos_distances), f)
+                
                 key_node_fname = os.path.join(FLAGS.save_dir, f'key_node_{i}.pkl')
                 with open(key_node_fname, 'wb') as f:
                     pickle.dump(np.array(key_nodes.pos), f)
-                
-                cos_distances_path = os.path.join(FLAGS.save_dir, f'cos_distances_{i}.pkl')
-                with open(cos_distances_path, 'wb') as f:
-                    pickle.dump(np.array(cos_distances), f)
                 
                 fname = os.path.join(FLAGS.save_dir, f'params_{i}.pkl')
                 print(f'Saving to {fname}')

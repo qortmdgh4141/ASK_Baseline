@@ -92,9 +92,12 @@ def compute_high_actor_loss(agent, batch, network_params):
     if agent.config['value_function_num'] == 'hierarchy':
         v1, v2 = agent.network(observations, cur_goals, method='high_value')
         nv1, nv2 = agent.network(high_targets, cur_goals, method='high_value')
+    
     else:
         v1, v2 = agent.network(observations, cur_goals, method='value')
         nv1, nv2 = agent.network(high_targets, cur_goals, method='value')
+        
+    
         
     v = (v1 + v2) / 2
     nv = (nv1 + nv2) / 2
@@ -106,6 +109,7 @@ def compute_high_actor_loss(agent, batch, network_params):
     dist = agent.network(observations, cur_goals, state_rep_grad=True, goal_rep_grad=True, method='high_actor', params=network_params)
 
 
+
     if agent.config['use_rep'] in ["hiql_goal_encoder", "vae_encoder"]:
         if agent.config['value_function_num'] == 'hierarchy':
             target = agent.network(targets=high_targets, bases=observations, method='high_value_goal_encoder')
@@ -115,12 +119,36 @@ def compute_high_actor_loss(agent, batch, network_params):
         target = high_targets 
     elif agent.config['use_rep'] == "hilp_subgoal_encoder":
         target = agent.network(observations=high_targets, method='hilp_phi')
+    elif agent.config['fetch_env']:
+        target = high_targets - observations
+        target = target[:,:batch['goals'].shape[-1]]
     else:
         target = high_targets - observations
     
     log_probs = dist.log_prob(target)
     actor_loss = -(exp_a * log_probs).mean()
         
+    # if agent.config['pseudo_obs']:
+    #     pseudo_v1, pseudo_v2 = agent.network(batch['pseudo_obs'], cur_goals, method='high_value')
+    #     pseudo_nv1, pseudo_nv2 = agent.network(high_targets, cur_goals, method='high_value')    
+    
+    #     pseudo_v = (pseudo_v1 + pseudo_v2) / 2
+    #     pseudo_nv = (pseudo_nv1 + pseudo_nv2) / 2
+
+    #     pseudo_adv = pseudo_nv - pseudo_v
+    #     pseudo_exp_a = jnp.exp(pseudo_adv * agent.config['high_temperature'])
+    #     pseudo_exp_a = jnp.minimum(pseudo_exp_a, 100.0)
+
+    #     pseudo_dist = agent.network(batch['pseudo_obs'], cur_goals, state_rep_grad=True, goal_rep_grad=True, method='high_actor', params=network_params)
+    #     pseudo_target = batch['pseudo_obs'] - observations
+        
+    
+    #     pseudo_log_probs = pseudo_dist.log_prob(pseudo_target)
+    #     pseudo_actor_loss = -(pseudo_exp_a * pseudo_log_probs).mean()
+    # else:
+    pseudo_actor_loss = 0
+    actor_loss = actor_loss + agent.config['pseudo_obs'] * pseudo_actor_loss
+    
     return actor_loss, {
         'high_actor_loss': actor_loss,
         'high_adv': adv.mean(),
@@ -128,6 +156,7 @@ def compute_high_actor_loss(agent, batch, network_params):
         'high_adv_median': jnp.median(adv),
         'high_mse': jnp.mean((dist.mode() - target)**2),
         'high_scale': dist.scale_diag.mean(),
+        'pseudo_actor_loss': pseudo_actor_loss,
     }
 
 def compute_value_loss(agent, batch, network_params):
@@ -171,12 +200,19 @@ def compute_value_loss(agent, batch, network_params):
 
     value_loss1 = expectile_loss(adv, q1 - v1, agent.config['pretrain_expectile']).mean()
     value_loss2 = expectile_loss(adv, q2 - v2, agent.config['pretrain_expectile']).mean()
-    value_loss = value_loss1 + value_loss2
+    value_loss_ = value_loss1 + value_loss2
 
     advantage = adv
     
+    if agent.config['pseudo_obs']:
+        
+        (pseudo_v1, pseudo_v2) = agent.network(batch['pseudo_obs'], cur_goals, method='value', params=network_params)
+        v = jax.lax.stop_gradient(jnp.minimum(v1, v2))
+        pseudo_loss = ((pseudo_v1-v)**2).mean() + ((pseudo_v2 - v)**2).mean()
+    else:
+        pseudo_loss = 0
     
-    
+    value_loss = value_loss_ + agent.config['pseudo_obs'] * pseudo_loss
     
     
     
@@ -190,6 +226,7 @@ def compute_value_loss(agent, batch, network_params):
         'adv max': advantage.max(),
         'adv min': advantage.min(),
         'accept prob': (advantage >= 0).mean(),
+        'pseudo_loss' : pseudo_loss
     }
 
 def compute_high_value_loss(agent, batch, network_params):
@@ -485,6 +522,7 @@ class JointTrainAgent(iql.IQLAgent):
 def create_learner(
         seed: int,
         observations: jnp.ndarray,
+        goals: jnp.ndarray,
         actions: jnp.ndarray,
         lr: float = 3e-4,
         actor_hidden_dims: Sequence[int] = (256, 256),
@@ -509,6 +547,7 @@ def create_learner(
         rng, actor_key, high_actor_key, critic_key, value_key = jax.random.split(rng, 5)
 
         value_goal_encoder = None # numerical or img
+        high_value_goal_encoder = None
         hilp_value_goal_encoder = None # HILP-numerical 
         vae_state_encoder = None # vae-numerical 
         vae_state_decoder = None # vae-numerical 
@@ -560,10 +599,15 @@ def create_learner(
             vae_state_encoder = Vae_Encoder(rep_dim=rep_dim, hidden_dim=state_hidden_dims, layer_norm=use_layer_norm)
             vae_state_decoder = Vae_Decoder(hidden_dim=state_hidden_dims[::-1], layer_norm=use_layer_norm, output_shape=observations.shape[-1])
         
+        fetch_env = False
+        
         if flag.use_rep in ["hilp_subgoal_encoder", "hilp_encoder"]:
             high_action_dim = flag.hilp_skill_dim
         elif flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
             high_action_dim = rep_dim
+        elif 'Fetch' in flag.env_name:
+            high_action_dim = goals.shape[-1]
+            fetch_env = True
         else:
             high_action_dim = observations.shape[-1]
             
@@ -594,7 +638,7 @@ def create_learner(
             flag=flag,
         )
         network_tx = optax.chain(optax.zero_nans(), optax.adam(learning_rate=lr))
-        network_params = network_def.init(value_key, observations, observations)['params']
+        network_params = network_def.init(value_key, observations, goals)['params']
         network = TrainState.create(network_def, network_params, tx=network_tx)
         params = unfreeze(network.params)
         params['networks_target_value'] = params['networks_value']
@@ -608,7 +652,7 @@ def create_learner(
         config = flax.core.FrozenDict(dict(
             discount=discount, temperature=temperature, high_temperature=high_temperature,
             target_update_rate=tau, pretrain_expectile=pretrain_expectile, way_steps=way_steps, keynode_ratio=flag.keynode_ratio, 
-            env_name=kwargs['env_name'], use_rep=flag.use_rep, vae_recon_coe=flag.vae_recon_coe, vae_kl_coe=flag.vae_kl_coe, value_function_num=flag.value_function_num
+            env_name=kwargs['env_name'], use_rep=flag.use_rep, vae_recon_coe=flag.vae_recon_coe, vae_kl_coe=flag.vae_kl_coe, value_function_num=flag.value_function_num, pseudo_obs=flag.pseudo_obs, fetch_env=fetch_env
         ))
 
         return JointTrainAgent(rng, network=network, critic=None, value=None, target_value=None, actor=None, config=config, key_nodes=key_nodes)

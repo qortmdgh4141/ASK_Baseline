@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from time import time as t
 from dm_control.mujoco import engine
 
+
 def supply_rng(f, rng=jax.random.PRNGKey(0)):
     """
     Wrapper that supplies a jax random key to a function (using keyword `seed`).
@@ -55,7 +56,6 @@ def env_step(env_name, env, action):
     elif 'kitchen' in env_name:
         next_observation, reward, done, info = env.step(action)
         if 'visual' in env_name:
-            
             next_observation = kitchen_render(env)
         else:
             next_observation = next_observation[:30]
@@ -64,6 +64,8 @@ def env_step(env_name, env, action):
         next_observation = next_observation['ob']
         del info['robot_info']
         del info['scene_info']
+    elif 'Fetch' in env_name:
+        next_observation, reward, done, info = env.step(action)
     else:
         raise NotImplementedError
     
@@ -116,6 +118,14 @@ def evaluate_with_trajectories(
             obs_goal[15:21] = goal
             node_dim = np.arange(15)
             interval, min_dist = 3, 2.0 
+        
+        elif 'Fetch' in env_name:
+            state,_  = env.reset()
+            observation, obs_goal = state['observation'], state['desired_goal']
+            interval, min_dist = 3, 2.0 
+            node_dim = np.arange(3)
+            
+
         else:
             raise NotImplementedError
         
@@ -150,6 +160,8 @@ def evaluate_with_trajectories(
                         cur_obs_subgoal = observation + cur_obs_subgoal
                 elif FLAGS.use_rep in ["hilp_encoder", "hilp_subgoal_encoder"]: 
                     cur_obs_subgoal = cur_obs_subgoal
+                elif 'Fetch' in FLAGS.env_name:
+                    cur_obs_subgoal = observation[:goal_info.shape[-1]] + cur_obs_subgoal
                 else:
                     cur_obs_subgoal = observation + cur_obs_subgoal
                     
@@ -225,8 +237,8 @@ def evaluate_with_trajectories(
                 if FLAGS.use_rep in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"] and FLAGS.relative_dist_in_eval_On:
                     rep_trajectory.append(cur_obs_delta)
                 if 'antmaze' in env_name:
-                    size = 500
-                    box_size = 0.015
+                    size = 240
+                    box_size = 0.008
                     cur_frame = env.render(mode='rgb_array', width=size, height=size).transpose(2, 0, 1).copy()
                     if ('large' in env_name or 'ultra' in env_name):
                         def xy_to_pixxy(x, y):
@@ -238,15 +250,19 @@ def evaluate_with_trajectories(
                                 pixy = (y / 36) * (0.19 - 0.81) + 0.81
                             return pixx, pixy
       
-                        #x_sub_goal, y_sub_goal = cur_obs_sub_goal[:2]
-                        #sub_pixx, sub_pixy = xy_to_pixxy(x_sub_goal, y_sub_goal)
-                        #cur_frame[:3, int((sub_pixy - box_size) * size):int((sub_pixy + box_size) * size), int((sub_pixx - box_size) * size):int((sub_pixx + box_size) * size)] = 160
+                        x_sub_goal, y_sub_goal = cur_obs_sub_goal[:2]
+                        sub_pixx, sub_pixy = xy_to_pixxy(x_sub_goal, y_sub_goal)
+                        cur_frame[:3, int((sub_pixy - box_size) * size):int((sub_pixy + box_size) * size), int((sub_pixx - box_size) * size):int((sub_pixx + box_size) * size)] = 160
                     render.append(cur_frame)
                 elif 'kitchen' in env_name:
                     render.append(kitchen_render(env, wh=200).transpose(2, 0, 1))
                 elif 'calvin' in env_name:
                     cur_frame = env.render(mode='rgb_array').transpose(2, 0, 1)
-                    render.append(cur_frame)     
+                    render.append(cur_frame)  
+                elif 'Fetch' in env_name:
+                    cur_frame = env.unwrapped.render().transpose(2, 0, 1)
+                    render.append(cur_frame)  
+                    
         if 'calvin' in env_name:
             info['return'] = sum(trajectory['reward'])
         add_to(stats, flatten(info, parent_key="final"))
@@ -295,3 +311,5 @@ class EpisodeMonitor(gym.ActionWrapper):
         self.total_timesteps = 0
         self._reset_stats()
         return self.env.reset()
+
+

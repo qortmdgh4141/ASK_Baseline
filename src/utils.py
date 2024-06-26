@@ -136,6 +136,41 @@ def record_video(label, step, renders=None, n_cols=None, skip_frames=1):
     renders = np.array(renders)
     return save_video(label, step, renders, n_cols=n_cols)
 
+def plot_value_map(agent, base_observation, goal_info, i, g_start_time):
+    import matplotlib.pyplot as plt
+    joint = np.tile(base_observation[2:], (59,46,1))
+    goal_info = np.tile(goal_info, (59,46,1))
+    mesh = np.meshgrid(np.linspace(0, 58, 59), np.linspace(0, 58, 59))
+    mesh = np.array(list(zip(mesh[0], mesh[1])), dtype=np.float32)
+    plt.figure(figsize=(10, 8))
+    x = np.arange(59)
+    y = np.arange(46)
+    xx, yy = np.meshgrid(y, x)
+    coordinates = np.dstack((xx,yy))
+    observations = np.concatenate((coordinates, joint), axis=2)
+    value = agent.network(observations, goal_info, method='value')[0].transpose(1,0)
+    
+    plt.figure(figsize=(10, 8))
+    plt.imshow(value, cmap='Blues_r', interpolation='nearest')
+    plt.colorbar(label='Value')
+    plt.gca().invert_yaxis()
+    # plt.gca().invert_xaxis()
+    
+    import os
+    os.makedirs(f'/home/spectrum/study/ASK_Baseline/value_img/{g_start_time}', exist_ok=True)
+    plt.savefig(f'/home/spectrum/study/ASK_Baseline/value_img/{g_start_time}/img_{i}.png', format="PNG", dpi=300)
+    
+    import io
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+
+    # Read the buffer into a PIL image and convert to NumPy array
+    from PIL import Image
+    value_map = Image.open(buf)
+    value_map = np.array(value_map)
+    return value_map
+
 
 class CsvLogger:
     def __init__(self, path):

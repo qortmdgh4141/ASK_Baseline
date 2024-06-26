@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import ml_collections
 from typing import *
+from jaxrl_m.evaluation import supply_rng
 
 @dataclasses.dataclass
 class GCDataset:
@@ -22,6 +23,9 @@ class GCDataset:
     terminal: bool = True
     use_rep: str = ""
     hierarchy: str = ""
+    p_aug: float = None
+    pseudo_obs : float = None
+    fetch_env : bool = False
     
     @staticmethod
     def get_default_config():
@@ -43,6 +47,9 @@ class GCDataset:
                 _,_,_, self.key_node = self.find_key_node(self.dataset['rep_observations'])
             else:
                 _,_,_, self.key_node = self.find_key_node(self.dataset['observations'])
+        if self.pseudo_obs:
+            self.max_obs = jnp.max(self.dataset['observations'], axis=0)
+            self.min_obs = jnp.min(self.dataset['observations'], axis=0)
 
     def sample_goals(self, indx, p_randomgoal=None, p_trajgoal=None, p_currgoal=None):
         if p_randomgoal is None:
@@ -179,6 +186,24 @@ class GCSDataset(GCDataset):
             else:
                 batch['high_masks'] = np.ones(batch_size)
         
+        if self.p_aug is not None:
+            if np.random.rand() < self.p_aug:
+                aug_keys = ['observations', 'next_observations', 'goals', 'high_targets', 'high_goals']
+                padding = 3
+                crop_froms = jnp.random.randint(0, 2 * padding + 1, (batch_size, 2))
+                crop_froms = jnp.concatenate([crop_froms, jnp.zeros((batch_size, 1), dtype=jnp.int32)], axis=1)
+                for key in aug_keys:
+                    batch[key] = jax.tree_map(lambda arr: jnp.array(batched_random_crop(arr, crop_froms, padding)) if len(arr.shape) == 4 else arr, batch[key])
+                    
+        if self.pseudo_obs:
+            key = jax.random.PRNGKey(0)
+            batch['pseudo_obs'] = jax.random.uniform(key, (batch_size, self.min_obs.shape[-1]), minval=self.min_obs, maxval=self.max_obs)
+        # min max 내에서 batch개 만큼의 random 샘플하기
+
+        if self.fetch_env:
+            batch['goals'] = batch['goals'][:,:3]
+            batch['low_goals'] = batch['low_goals'][:,:3]
+            batch['high_goals'] = batch['high_goals'][:,:3]
         
         
         if isinstance(batch['goals'], FrozenDict):

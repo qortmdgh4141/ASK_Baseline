@@ -177,28 +177,28 @@ class HierarchicalActorCritic(nn.Module):
 # ---------------------------------------------------------------------------------------------------------------    
     # HIQL
     def value(self, observations, goals, **kwargs):
-        if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
-            state_reps = get_rep(self.encoders['value_state'], targets=observations)
-            goals = get_rep(self.encoders['value_goal'], targets=goals, bases=observations)
+        # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+        state_reps = get_rep(self.encoders['value_state'], targets=observations)
+        goals = get_rep(self.encoders['value_goal'], targets=goals, bases=observations)
         return self.networks['value'](state_reps, goals, **kwargs)
 
     def target_value(self, observations, goals, **kwargs):
-        if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
-            state_reps = get_rep(self.encoders['value_state'], targets=observations)
-            goals = get_rep(self.encoders['value_goal'], targets=goals, bases=observations)
+        # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+        state_reps = get_rep(self.encoders['value_state'], targets=observations)
+        goals = get_rep(self.encoders['value_goal'], targets=goals, bases=observations)
         return self.networks['target_value'](state_reps, goals, **kwargs)
     
     # hierarcy value function
     def high_value(self, observations, goals, **kwargs):
-        if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
-            state_rep = get_rep(self.encoders['value_state'], targets=observations)
-            goals = get_rep(self.encoders['high_value_goal'], targets=goals, bases=observations)
+        # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+        state_rep = get_rep(self.encoders['value_state'], targets=observations)
+        goals = get_rep(self.encoders['high_value_goal'], targets=goals, bases=observations)
         return self.networks['high_value'](state_rep, goals, **kwargs)
 
     def high_target_value(self, observations, goals, **kwargs):
-        if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
-            state_rep = get_rep(self.encoders['value_state'], targets=observations)
-            goals = get_rep(self.encoders['high_value_goal'], targets=goals, bases=observations)
+        # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+        state_rep = get_rep(self.encoders['value_state'], targets=observations)
+        goals = get_rep(self.encoders['high_value_goal'], targets=goals, bases=observations)
         return self.networks['high_target_value'](state_rep, goals, **kwargs)
 
     def actor(self, observations, goals, low_dim_goals=False, state_rep_grad=True, goal_rep_grad=True, **kwargs):
@@ -209,8 +209,8 @@ class HierarchicalActorCritic(nn.Module):
         if low_dim_goals:
             goal_reps = goals
         else:
-            if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"] :
-                goal_reps = get_rep(self.encoders['value_goal'], targets=goals, bases=observations)
+            # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"] :
+            goal_reps = get_rep(self.encoders['value_goal'], targets=goals, bases=observations)
             if not goal_rep_grad: # goal_rep_grad=False: low actor때는 업데이트 안함.
                 goal_reps = jax.lax.stop_gradient(goal_reps)
         return self.networks['actor'](jnp.concatenate([state_rep, goal_reps], axis=-1), **kwargs)
@@ -255,6 +255,9 @@ class HierarchicalActorCritic(nn.Module):
 # ---------------------------------------------------------------------------------------------------------------
     # 네트워크 초기화
     def __call__(self, observations=None, goals=None, latent=None):
+        # if 'Fetch' in self.flag.env_name:
+            # goals = goals[:,:3]
+        
         if self.flag.use_rep == "hiql_goal_encoder":
             rets = {
                 'high_value_goal_encoder' : self.high_value_goal_encoder(observations, goals), 

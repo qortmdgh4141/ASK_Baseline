@@ -184,10 +184,10 @@ def calc_return_to_go_kitchen(dataset, flags):
             tmp_episode.append(i)
             if dataset['terminals'][i]:
                 if dataset['rewards'][i] >= threshold:
-                    expert_episode_index.append(np.array(tmp_episode))
-                episode_index.append(np.array(tmp_episode))
+                    expert_episode_index.append(tmp_episode.copy())
+                episode_index.append(tmp_episode.copy())
                 tmp_episode = []
-        return np.array(expert_episode_index) if flags.expert_data_On else np.array(episode_index)
+        return expert_episode_index if flags.expert_data_On else episode_index
     gamma=0.9
     rewards = dataset['rewards']
     terminals = dataset['terminals']
@@ -306,7 +306,7 @@ def get_rep_observation(encoder_fn, dataset, FLAGS, goal=None):
 
 # 0610 승호수정 goal only
 def get_rep_observation_goal_only(encoder_fn, dataset, FLAGS):
-    mini_batch = 10000
+    mini_batch = 5000
     size = len(dataset['observations']) // mini_batch
     rep_observations = np.zeros((len(dataset['observations']), FLAGS.rep_dim), dtype=np.float32)
     for i in range(size+1):

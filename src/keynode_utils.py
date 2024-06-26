@@ -87,9 +87,9 @@ class KeyNode(object):
             # from sklearn.manifold import TSNE
             from openTSNE import TSNE
             self.tsne = TSNE(verbose=True)
-            target_obs_index = np.random.choice(len(target_obs), len(target_obs)//100)
-            self.values = self.values[:len(self.values)//100] if target_obs_index.shape[0] != self.values.shape[0] else self.values
-            self.tsne = self.tsne.fit(target_obs[target_obs_index])
+            # target_obs_index = np.random.choice(len(target_obs), len(target_obs)//100)
+            # self.values = self.values[:len(self.values)//100] if target_obs_index.shape[0] != self.values.shape[0] else self.values
+            self.tsne = self.tsne.fit(target_obs)
             low_dim_target_obs = np.ascontiguousarray(self.tsne).astype(np.float32)
             
             
