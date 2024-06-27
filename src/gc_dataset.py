@@ -25,7 +25,7 @@ class GCDataset:
     hierarchy: str = ""
     p_aug: float = None
     pseudo_obs : float = None
-    fetch_env : bool = False
+    env_name : str = ""
     
     @staticmethod
     def get_default_config():
@@ -200,11 +200,16 @@ class GCSDataset(GCDataset):
             batch['pseudo_obs'] = jax.random.uniform(key, (batch_size, self.min_obs.shape[-1]), minval=self.min_obs, maxval=self.max_obs)
         # min max 내에서 batch개 만큼의 random 샘플하기
 
-        if self.fetch_env:
-            batch['goals'] = batch['goals'][:,:3]
-            batch['low_goals'] = batch['low_goals'][:,:3]
-            batch['high_goals'] = batch['high_goals'][:,:3]
-        
+        if 'Fetch' in self.env_name:
+            if 'Reach' in self.env_name:
+                batch['goals'] = batch['goals'][:,:3]
+                batch['low_goals'] = batch['low_goals'][:,:3]
+                batch['high_goals'] = batch['high_goals'][:,:3]
+            else:
+                batch['goals'] = batch['goals'][:,3:6]
+                batch['low_goals'] = batch['low_goals'][:,3:6]
+                batch['high_goals'] = batch['high_goals'][:,3:6]
+                
         
         if isinstance(batch['goals'], FrozenDict):
             # Freeze the other observations

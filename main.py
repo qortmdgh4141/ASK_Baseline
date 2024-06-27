@@ -35,7 +35,7 @@ from jaxrl_m.evaluation import supply_rng, evaluate_with_trajectories, EpisodeMo
 FLAGS = flags.FLAGS
 flags.DEFINE_string('save_dir', f'/home/spectrum/study/experiment_output/', '')
 flags.DEFINE_string('run_group', 'EXP', '')
-flags.DEFINE_string('env_name', 'FetchPush-v1', '') # 'FetchPush-v1
+flags.DEFINE_string('env_name', 'FetchPush-v1-mixed', '') # 'FetchPush-v1
 # flags.DEFINE_string('env_name', 'antmaze-ultra-diverse-v0', '')
 flags.DEFINE_string('project', 'test', '')
 flags.DEFINE_string('algo_name', None, '')
@@ -217,7 +217,7 @@ def main(_):
     FLAGS.gcdataset['keynode_ratio'] = FLAGS.keynode_ratio
     FLAGS.gcdataset['hierarchy'] = FLAGS.value_function_num
     FLAGS.gcdataset['pseudo_obs'] = FLAGS.pseudo_obs
-    FLAGS.gcdataset['fetch_env'] = True if 'Fetch' in FLAGS.env_name else False
+    FLAGS.gcdataset['env_name'] = FLAGS.env_name
   
     FLAGS.config['env_name'] = FLAGS.env_name
     FLAGS.config['pretrain_expectile'] = FLAGS.pretrain_expectile
@@ -379,13 +379,13 @@ def main(_):
         import gymnasium as gym
         from src.envs.fetch import fetch_load, FetchGoalWrapper
         
-        env = gym.make(FLAGS.env_name, render_mode='rgb_array',  max_episode_steps=50)
+        env = gym.make(FLAGS.env_name.split('-')[0], render_mode='rgb_array',  max_episode_steps=50)
         env.reset(seed=FLAGS.seed)
         env = FetchGoalWrapper(env, FLAGS.env_name)
         env = EpisodeMonitor(env)
         
-        data_folder = FLAGS.env_name.split('-')[0]
-        dataset_file = os.path.join(f'/home/spectrum/study/ASK_Baseline/data/expert/{data_folder}/buffer.pkl')
+        env_name, version, type_ = FLAGS.env_name.split('-')
+        dataset_file = os.path.join(f'/home/spectrum/study/ASK_Baseline/data/{type_}/{env_name}/buffer.pkl')
         with open(dataset_file, 'rb') as f:
             dataset = pickle.load(f)
             print(f'{dataset_file}, fetch dataset loaded')
