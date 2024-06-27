@@ -119,9 +119,13 @@ def compute_high_actor_loss(agent, batch, network_params):
         target = high_targets 
     elif agent.config['use_rep'] == "hilp_subgoal_encoder":
         target = agent.network(observations=high_targets, method='hilp_phi')
-    elif agent.config['fetch_env']:
+    elif 'Fetch' in agent.config['env_name']:
         target = high_targets - observations
-        target = target[:,:batch['goals'].shape[-1]]
+        if 'Reach' in agent.config['env_name']:
+            target = target[:,:3]
+        else:
+            target = target[:,3:6]
+            
     else:
         target = high_targets - observations
     
@@ -208,7 +212,7 @@ def compute_value_loss(agent, batch, network_params):
         
         (pseudo_v1, pseudo_v2) = agent.network(batch['pseudo_obs'], cur_goals, method='value', params=network_params)
         v = jax.lax.stop_gradient(jnp.minimum(v1, v2))
-        pseudo_loss = ((pseudo_v1-v)**2).mean() + ((pseudo_v2 - v)**2).mean()
+        pseudo_loss = (((pseudo_v1-v)**2).mean() + ((pseudo_v2 - v)**2).mean()).mean()
     else:
         pseudo_loss = 0
     
@@ -537,7 +541,7 @@ def create_learner(
         rep_dim: int = 10,
         use_layer_norm: int = 1,
         visual: int = 0,
-        encoder: str = 'impala_small', # 'impala_small'
+        encoder: str = 'impala', # 'impala_small'
         key_nodes : Any = None,
         flag : Any =None,
         **kwargs):
@@ -607,7 +611,6 @@ def create_learner(
             high_action_dim = rep_dim
         elif 'Fetch' in flag.env_name:
             high_action_dim = goals.shape[-1]
-            fetch_env = True
         else:
             high_action_dim = observations.shape[-1]
             
@@ -652,7 +655,7 @@ def create_learner(
         config = flax.core.FrozenDict(dict(
             discount=discount, temperature=temperature, high_temperature=high_temperature,
             target_update_rate=tau, pretrain_expectile=pretrain_expectile, way_steps=way_steps, keynode_ratio=flag.keynode_ratio, 
-            env_name=kwargs['env_name'], use_rep=flag.use_rep, vae_recon_coe=flag.vae_recon_coe, vae_kl_coe=flag.vae_kl_coe, value_function_num=flag.value_function_num, pseudo_obs=flag.pseudo_obs, fetch_env=fetch_env
+            env_name=kwargs['env_name'], use_rep=flag.use_rep, vae_recon_coe=flag.vae_recon_coe, vae_kl_coe=flag.vae_kl_coe, value_function_num=flag.value_function_num, pseudo_obs=flag.pseudo_obs,
         ))
 
         return JointTrainAgent(rng, network=network, critic=None, value=None, target_value=None, actor=None, config=config, key_nodes=key_nodes)

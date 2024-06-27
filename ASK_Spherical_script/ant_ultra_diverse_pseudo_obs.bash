@@ -11,15 +11,15 @@ main_py_path="/data/tg_park/study/ASK_Baseline/main.py" # 부모 디렉토리에
 current_time=$(date "+%m-%d_%H:%M")
 project="ant-ultra"
 
-extra_name="pseudo_100"
+extra_name="pseudo_0.1_h_0.1"
 
 gpu="1"
 start=0
 end_=3
 
 use_rep=0 # ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]
-pseudo_obs=100
-high_temperature=1
+pseudo_obs=0.1
+high_temperature=0.1
 
 for ((i = start; i <= end_; i++)); do
     python ${main_py_path} --gpu ${gpu} --save_dir ${bash_script_path} --run_group ant_ultra_diverse_${extra_name}_${current_time} --env_name antmaze-ultra-diverse-v0 --project ${project} \

@@ -4,33 +4,45 @@ import numpy as np
 
 def fetch_load(env_name, data):
 
+    # observations = data['o'][:,:-1]
+    # next_observations = data['o'][:,1:]
+    # dones_float = np.zeros((data['o'].shape[0],data['o'].shape[1]-1))
+    # dones_float[:,-1] = 1
+    # dones_float = dones_float
     observations = data['o'][:,:-1].reshape(-1, data['o'].shape[-1])
     next_observations = data['o'][:,1:].reshape(-1, data['o'].shape[-1])
     dones_float = np.zeros((data['o'].shape[0],data['o'].shape[1]-1))
-    dones_float[:,:-1] = 1
+    dones_float[:,-1] = 1
     dones_float = dones_float.reshape(-1)
     
     return Dataset.create(
             observations=observations.astype(np.float32),
             actions=data['u'].reshape(-1, data['u'].shape[-1]).astype(np.float32),
+            # actions=data['u'].astype(np.float32),
             rewards=None,
             masks=None,
             dones_float=dones_float,
             next_observations=next_observations.astype(np.float32),
             returns = np.ones_like(dones_float).astype(np.float32),
+            # goal_info = data['g'],
             goal_info = data['g'].reshape(-1, data['g'].shape[-1]),
             ), None
 
-def reach_goal(state, desired_goal):
+def reach_goal(env_name, state, desired_goal):
     epsilon = 0.05
-    achieved_goal = state[:desired_goal.shape[-1]]
+    if 'Reach' in env_name:
+        achieved_goal = state[:3]
+    else:
+        achieved_goal = state[3:6]
+        
 
     return np.linalg.norm((achieved_goal, desired_goal)) < epsilon
 
 class FetchGoalWrapper(Wrapper):
-    def __init__(self, env):
+    def __init__(self, env, env_name):
         Wrapper.__init__(self, env)
         self.env = env
+        self.env_name = env_name
         self.action_space = env.action_space
         self.observation_space = env.observation_space
     
@@ -47,7 +59,7 @@ class FetchGoalWrapper(Wrapper):
         reward +=1 
         self.observation, self.achieved_goal, self.desired_goal = state['observation'], state['achieved_goal'], state['desired_goal']
         
-        if reach_goal(self.observation, self.achieved_goal) or truncated:
+        if reach_goal(self.env_name, self.observation, self.achieved_goal) or truncated:
             done = True
         return self.observation, reward, done, self.info
     

@@ -233,7 +233,7 @@ def evaluate_with_trajectories(
             add_to(stats, flatten(info))
             observation = next_observation
             # Render
-            if i >= num_episodes and step % 3 == 0:
+            if i >= num_episodes and (step % 3 == 0 or 'Fetch' in env_name):
                 if FLAGS.use_rep in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"] and FLAGS.relative_dist_in_eval_On:
                     rep_trajectory.append(cur_obs_delta)
                 if 'antmaze' in env_name:

@@ -140,13 +140,13 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time):
     import matplotlib.pyplot as plt
     joint = np.tile(base_observation[2:], (59,46,1))
     goal_info = np.tile(goal_info, (59,46,1))
-    mesh = np.meshgrid(np.linspace(0, 58, 59), np.linspace(0, 58, 59))
-    mesh = np.array(list(zip(mesh[0], mesh[1])), dtype=np.float32)
+    # mesh = np.meshgrid(np.linspace(0, 58, 59), np.linspace(0, 58, 59))
+    # mesh = np.array(list(zip(mesh[0], mesh[1])), dtype=np.float32)
     plt.figure(figsize=(10, 8))
     x = np.arange(59)
     y = np.arange(46)
     xx, yy = np.meshgrid(y, x)
-    coordinates = np.dstack((xx,yy))
+    coordinates = np.dstack((yy,xx))
     observations = np.concatenate((coordinates, joint), axis=2)
     value = agent.network(observations, goal_info, method='value')[0].transpose(1,0)
     

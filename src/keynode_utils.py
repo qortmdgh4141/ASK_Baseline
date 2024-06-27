@@ -17,6 +17,10 @@ def build_keynodes(dataset, flags=None, episode_index= None):
             obs = obs[:, :9]
         elif 'calvin' in flags.env_name:
             obs = obs[:, :15]
+    if 'Fetch' in flags.env_name:
+        obs = obs.reshape((-1,obs.shape[-1]))[:, :3]
+        returns = dataset['returns'].reshape(-1)
+        
     
     data_index = np.arange(len(obs))
     if flags.sparse_data:
@@ -38,7 +42,10 @@ def build_keynodes(dataset, flags=None, episode_index= None):
             print(f'data : {len(sparse_data_index)}, non expert data : {non_value_index.sum()}, expert_data : {value_index.sum()}, ratio :  {np.round(value_index.sum() / len(sparse_data_index) * 100, 2)} %')
             
     if flags.kmean_weight_On:
-        nodes = KeyNode(obs=obs[data_index], values=dataset['returns'][data_index], flags=flags)
+        # fetch 환경 이후 수정 (fetch dataset의 shape이 다른 환경과 다름) 
+        # dataset['returns'] -> return
+        # nodes = KeyNode(obs=obs[data_index], values=dataset['returns'][data_index], flags=flags)
+        nodes = KeyNode(obs=obs[data_index], values=returns[data_index], flags=flags)
     else:
         state_values = np.ones(obs.shape[0]).astype(np.float32) 
         nodes = KeyNode(obs=obs[data_index], values=state_values[data_index], flags=flags)
@@ -226,8 +233,11 @@ class KeyNode(object):
             input_pos = input_obs / jnp.sqrt(node_dim)
         elif self.flags.low_dim_clustering:
             input_pos = input_obs
-        else:
+            # rep를 사용할대만 normalizing
+        elif self.flags.use_rep:
             input_pos = (input_obs - self.scale_min) / (self.scale_max - self.scale_min)       
+        else:
+            input_pos = input_obs
              
         if self.flags.specific_dim_On:
             if 'ant' in self.env_name:

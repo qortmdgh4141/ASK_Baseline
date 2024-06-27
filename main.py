@@ -35,7 +35,7 @@ from jaxrl_m.evaluation import supply_rng, evaluate_with_trajectories, EpisodeMo
 FLAGS = flags.FLAGS
 flags.DEFINE_string('save_dir', f'/home/spectrum/study/experiment_output/', '')
 flags.DEFINE_string('run_group', 'EXP', '')
-flags.DEFINE_string('env_name', 'antmaze-ultra-diverse-v0', '')
+flags.DEFINE_string('env_name', 'FetchPush-v1', '') # 'FetchPush-v1
 # flags.DEFINE_string('env_name', 'antmaze-ultra-diverse-v0', '')
 flags.DEFINE_string('project', 'test', '')
 flags.DEFINE_string('algo_name', None, '')
@@ -84,7 +84,7 @@ flags.DEFINE_integer('use_goal_info_On', 0, '')
 flags.DEFINE_string('kmean_weight_type', 'rtg_uniform', '')  # ['rtg_discount', 'rtg_uniform', "hilbert_td"]
 flags.DEFINE_integer('specific_dim_On', 0, '')
 flags.DEFINE_float('keynode_ratio', 0.0, '')
-flags.DEFINE_integer('use_keynode_in_eval_On', 0, '')
+flags.DEFINE_integer('use_keynode_in_eval_On', 1, '')
 
 flags.DEFINE_integer('relative_dist_in_eval_On', 0, '')
 flags.DEFINE_string('mapping_method', 'nearest', '') # nearest, triple, center
@@ -103,7 +103,7 @@ flags.DEFINE_float('mapping_threshold', 0, '')
 
 flags.DEFINE_string('value_function_num', 'flat', '') # 'flat' / 'hierarchy'
 flags.DEFINE_string('low_dim_clustering', '', '') #[tsne_dim, pca_dim, ''] ex) hilp_2 : hilp - 2dim, pca_2 : pca - 2dim
-flags.DEFINE_float('pseudo_obs', 10, '') #
+flags.DEFINE_float('pseudo_obs', 0, '') #
 
 
 wandb_config = default_wandb_config()
@@ -379,16 +379,16 @@ def main(_):
         import gymnasium as gym
         from src.envs.fetch import fetch_load, FetchGoalWrapper
         
-        env = gym.make(FLAGS.env_name, render_mode='rgb_array',  max_episode_steps=200)
+        env = gym.make(FLAGS.env_name, render_mode='rgb_array',  max_episode_steps=50)
         env.reset(seed=FLAGS.seed)
-        env = FetchGoalWrapper(env)
+        env = FetchGoalWrapper(env, FLAGS.env_name)
         env = EpisodeMonitor(env)
         
         data_folder = FLAGS.env_name.split('-')[0]
-        dataset_file = os.path.join(f'/home/spectrum/study/ASK_Baseline/data/mixed/{data_folder}/buffer.pkl')
+        dataset_file = os.path.join(f'/home/spectrum/study/ASK_Baseline/data/expert/{data_folder}/buffer.pkl')
         with open(dataset_file, 'rb') as f:
             dataset = pickle.load(f)
-        
+            print(f'{dataset_file}, fetch dataset loaded')
         dataset, episode_index = fetch_load(FLAGS.env_name, dataset)
         # dataset, episode_index = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
         
