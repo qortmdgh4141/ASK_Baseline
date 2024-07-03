@@ -27,7 +27,7 @@ from functools import partial
 from src.agents import ask as learner
 from src.gc_dataset import GCSDataset
 from ml_collections import config_flags
-from src.utils import record_video, CsvLogger, plot_value_map
+from src.utils import record_video, CsvLogger, plot_value_map, get_learner
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
 from src import d4rl_utils, d4rl_ant, ant_diagnostics, viz_utils, keynode_utils
 from jaxrl_m.evaluation import supply_rng, evaluate_with_trajectories, EpisodeMonitor
@@ -38,7 +38,7 @@ flags.DEFINE_string('run_group', 'EXP', '')
 flags.DEFINE_string('env_name', 'FetchPush-v1-mixed', '') # 'FetchPush-v1
 # flags.DEFINE_string('env_name', 'antmaze-ultra-diverse-v0', '')
 flags.DEFINE_string('project', 'test', '')
-flags.DEFINE_string('algo_name', None, '')
+flags.DEFINE_string('algo_name', 'hiql', '')
 
 flags.DEFINE_integer('gpu', 0, '')
 flags.DEFINE_integer('seed', 0, '')
@@ -72,7 +72,7 @@ flags.DEFINE_float('p_aug', 0, '')
 flags.DEFINE_float('sparse_data', 0, '') # 100% setting : 0, 30% setting : -7, 10% setting : -9
 flags.DEFINE_integer('expert_data_On', 0, '') # 현재 kitchen (reward >= 3), calvin (reward >= 4)만 적용
 
-flags.DEFINE_string('use_rep', '0', '') # ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]
+flags.DEFINE_string('use_rep', '', '') # ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]
 flags.DEFINE_integer('rep_normalizing_On', 1, '') # 0: rep_norm 제거 // 1: rep_norm 사용
 flags.DEFINE_integer('rep_dim', 10, '')
 flags.DEFINE_integer('keynode_dim', 10, '')
@@ -84,7 +84,7 @@ flags.DEFINE_integer('use_goal_info_On', 0, '')
 flags.DEFINE_string('kmean_weight_type', 'rtg_uniform', '')  # ['rtg_discount', 'rtg_uniform', "hilbert_td"]
 flags.DEFINE_integer('specific_dim_On', 0, '')
 flags.DEFINE_float('keynode_ratio', 0.0, '')
-flags.DEFINE_integer('use_keynode_in_eval_On', 1, '')
+flags.DEFINE_integer('use_keynode_in_eval_On', 0, '')
 
 flags.DEFINE_integer('relative_dist_in_eval_On', 0, '')
 flags.DEFINE_string('mapping_method', 'nearest', '') # nearest, triple, center
@@ -104,6 +104,7 @@ flags.DEFINE_float('mapping_threshold', 0, '')
 flags.DEFINE_string('value_function_num', 'flat', '') # 'flat' / 'hierarchy'
 flags.DEFINE_string('low_dim_clustering', '', '') #[tsne_dim, pca_dim, ''] ex) hilp_2 : hilp - 2dim, pca_2 : pca - 2dim
 flags.DEFINE_float('pseudo_obs', 0, '') #
+flags.DEFINE_float('small_subgoal_space', 1, '') #
 
 
 wandb_config = default_wandb_config()
@@ -218,6 +219,7 @@ def main(_):
     FLAGS.gcdataset['hierarchy'] = FLAGS.value_function_num
     FLAGS.gcdataset['pseudo_obs'] = FLAGS.pseudo_obs
     FLAGS.gcdataset['env_name'] = FLAGS.env_name
+    FLAGS.gcdataset['small_subgoal_space'] = FLAGS.small_subgoal_space
   
     FLAGS.config['env_name'] = FLAGS.env_name
     FLAGS.config['pretrain_expectile'] = FLAGS.pretrain_expectile
@@ -283,7 +285,7 @@ def main(_):
         else:
             env = d4rl_utils.make_env(env_name)
             env.seed(FLAGS.seed)   
-        dataset, episode_index = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
+        dataset, episode_index, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
         dataset = dataset.copy({'rewards': dataset['rewards'] - 1.0})
         env.render(mode='rgb_array', width=500, height=500)
         if 'large' in FLAGS.env_name:
@@ -312,7 +314,7 @@ def main(_):
             env = d4rl_utils.make_env(orig_env_name)
             cur_folder = os.path.dirname(__file__)
             dataset = dict(np.load(os.path.join(cur_folder, f'data/d4rl_kitchen_rendered_kitchen-mixed-v0.npz'))) 
-            dataset, episode_index = d4rl_utils.get_dataset(env, FLAGS.env_name, dataset=dataset, filter_terminals=True, flag=FLAGS)
+            dataset, episode_index, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, dataset=dataset, filter_terminals=True, flag=FLAGS)
 
             state = env.reset()
             # Random example state from the dataset for proprioceptive states
@@ -328,7 +330,7 @@ def main(_):
         else:
             env = d4rl_utils.make_env(FLAGS.env_name)
             env.seed(FLAGS.seed)
-            dataset, episode_index = d4rl_utils.get_dataset(env, FLAGS.env_name, filter_terminals=True)
+            dataset, episode_index, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, filter_terminals=True)
             dataset = dataset.copy({'observations': dataset['observations'][:, :30], 'next_observations': dataset['next_observations'][:, :30]})
     elif 'calvin' in FLAGS.env_name:
         from src.envs.calvin import CalvinEnv
@@ -383,13 +385,13 @@ def main(_):
         env.reset(seed=FLAGS.seed)
         env = FetchGoalWrapper(env, FLAGS.env_name)
         env = EpisodeMonitor(env)
-        
+        # 'FetchPick-v1-expert'
         env_name, version, type_ = FLAGS.env_name.split('-')
         dataset_file = os.path.join(f'/home/spectrum/study/ASK_Baseline/data/{type_}/{env_name}/buffer.pkl')
         with open(dataset_file, 'rb') as f:
             dataset = pickle.load(f)
             print(f'{dataset_file}, fetch dataset loaded')
-        dataset, episode_index = fetch_load(FLAGS.env_name, dataset)
+        dataset, episode_index, dataset_config = fetch_load(FLAGS.env_name, dataset)
         # dataset, episode_index = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
         
     else:
@@ -402,8 +404,10 @@ def main(_):
         example_goals = dataset['goal_info'][0, np.newaxis]
     else:
         example_goals = example_observation
-        
-
+    
+    FLAGS.config.update(dataset_config)
+    
+    learner = get_learner(FLAGS)
     agent = learner.create_learner(FLAGS.seed,
                                    example_observation,
                                    example_goals,
@@ -551,7 +555,7 @@ def main(_):
                     rep_observations = d4rl_utils.get_rep_observation_spherical(encoder_fn, dataset, FLAGS)
                 elif FLAGS.rep_type == 'state':
                     rep_observations = d4rl_utils.get_rep_observation_goal_only(encoder_fn, dataset, FLAGS)
-            elif FLAGS.use_rep != '0':
+            elif FLAGS.use_rep != '':
                 if FLAGS.kmean_weight_type == 'hilbert_td' :
                     dataset = d4rl_utils.hilp_add_data(dataset, rep_observations)
                 elif FLAGS.kmean_weight_type in ['rtg_discount', 'rtg_uniform']:
@@ -625,7 +629,7 @@ def main(_):
                 config=FLAGS.config.to_dict()
             )
             if i == 1 or i % FLAGS.save_interval == 0:
-                if FLAGS.use_rep !='0':
+                if FLAGS.use_rep !='':
                     rep_trajectory_fname = os.path.join(FLAGS.save_dir, f'rep_trajectories_{i}.pkl')
                     with open(rep_trajectory_fname, 'wb') as f:
                         pickle.dump(np.array(rep_trajectories), f)

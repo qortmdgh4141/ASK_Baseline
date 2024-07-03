@@ -249,6 +249,9 @@ class KeyNode(object):
             elif 'calvin' in self.env_name:
                 input_pos = input_obs[:15] 
                 node_dim = 15
+        if 'Fetch' in self.env_name:
+            input_pos = input_obs[:3]
+            node_dim = 3
 
         # 0610 승호수정 spherical
         if self.spherical_On:

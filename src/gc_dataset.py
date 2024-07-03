@@ -26,6 +26,7 @@ class GCDataset:
     p_aug: float = None
     pseudo_obs : float = None
     env_name : str = ""
+    small_subgoal_space : float = None
     
     @staticmethod
     def get_default_config():
@@ -203,13 +204,16 @@ class GCSDataset(GCDataset):
         if 'Fetch' in self.env_name:
             if 'Reach' in self.env_name:
                 batch['goals'] = batch['goals'][:,:3]
-                batch['low_goals'] = batch['low_goals'][:,:3]
                 batch['high_goals'] = batch['high_goals'][:,:3]
+                if self.small_subgoal_space:
+                    batch['low_goals'] = batch['low_goals'][:,:3]
+                    # batch['high_targets'] = batch['high_targets'][:,:3]
             else:
                 batch['goals'] = batch['goals'][:,3:6]
-                batch['low_goals'] = batch['low_goals'][:,3:6]
                 batch['high_goals'] = batch['high_goals'][:,3:6]
-                
+                if self.small_subgoal_space:
+                    batch['low_goals'] = batch['low_goals'][:,3:6]
+                    # batch['high_targets'] = batch['high_targets'][:,3:6]
         
         if isinstance(batch['goals'], FrozenDict):
             # Freeze the other observations

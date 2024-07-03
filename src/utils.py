@@ -171,6 +171,15 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time):
     value_map = np.array(value_map)
     return value_map
 
+def get_learner(flags):
+    if flags.algo_name == 'hiql':
+        from src.agents import hiql as learner
+    elif flags.algo_name == 'ask':
+        from src.agents import ask as learner
+    elif flags.algo_name == 'cql':
+        from src.agents import cql as learner
+    
+    return learner
 
 class CsvLogger:
     def __init__(self, path):

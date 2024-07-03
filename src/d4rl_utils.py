@@ -76,6 +76,12 @@ def get_dataset(env: gym.Env,
             returns, episode_index = calc_return_to_go_kitchen(dataset, flag)
         elif 'calvin' in env_name:
             returns, episode_index = calc_return_to_go_calvin(dataset, flag)
+            
+        config = {'observation_min':dataset['observations'].min(),
+                  'observation_max':dataset['observations'].max(),
+                  'action_min':dataset['actions'].min(),
+                  'action_min':dataset['actions'].min(),
+                  }
         return Dataset.create(
             observations=observations,
             actions=dataset['actions'].astype(np.float32),
@@ -85,7 +91,7 @@ def get_dataset(env: gym.Env,
             next_observations=next_observations,
             returns = returns,
             goal_info = goal_info,
-            ), episode_index
+            ), episode_index, config
 
 def kitchen_render(kitchen_env, wh=64):
     from dm_control.mujoco import engine

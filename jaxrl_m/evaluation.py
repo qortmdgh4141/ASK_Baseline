@@ -160,8 +160,8 @@ def evaluate_with_trajectories(
                         cur_obs_subgoal = observation + cur_obs_subgoal
                 elif FLAGS.use_rep in ["hilp_encoder", "hilp_subgoal_encoder"]: 
                     cur_obs_subgoal = cur_obs_subgoal
-                elif 'Fetch' in FLAGS.env_name:
-                    cur_obs_subgoal = observation[:goal_info.shape[-1]] + cur_obs_subgoal
+                elif 'Fetch' in FLAGS.env_name and FLAGS.small_subgoal_space:
+                        cur_obs_subgoal = observation[:goal_info.shape[-1]] + cur_obs_subgoal
                 else:
                     cur_obs_subgoal = observation + cur_obs_subgoal
                     

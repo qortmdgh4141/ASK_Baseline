@@ -13,9 +13,9 @@ project="FetchSlide-expert"
 
 extra_name="hiql"
 
-gpu="1"
+gpu="0"
 start=0
-end_=3
+end_=0
 
 value_function_num='flat'   # 'flat', 'hierarchy'
 low_dim_clustering="" # [tsne_dim, pca_dim, ''] ex) hilp_2 : hilp - 2dim, pca_2 : pca - 2dim
@@ -25,14 +25,10 @@ low_dim_clustering="" # [tsne_dim, pca_dim, ''] ex) hilp_2 : hilp - 2dim, pca_2 
 
 for ((i = start; i <= end_; i++)); do
     python ${main_py_path} --gpu ${gpu} --save_dir ${bash_script_path} --run_group FetchSlide_${extra_name}_${current_time} --env_name FetchSlide-v1-expert --project ${project} \
-        --seed $((i * 100)) --pretrain_steps 500002 --eval_interval 25000 --save_interval 100000 --eval_episodes 6 --num_video_episodes 24 --way_steps 10 \
-        --sparse_data 0 --expert_data_On 0 \
-        --spherical_On 0 --rep_type state \
-        --mapping_threshold 0 \
-        --use_rep 0 --rep_normalizing_On 1 --rep_dim 10 --hilp_skill_dim 0 --keynode_dim 10 \
-        --build_keynode_time during_training --keynode_num 300 --kmean_weight_On 1 --use_goal_info_On 0 --kmean_weight_type rtg_uniform --specific_dim_On 0 --keynode_ratio 0.0 --use_keynode_in_eval_On 0 \
+        --seed $((i * 100)) --pretrain_steps 500002 --eval_interval 25000 --save_interval 100000 --eval_episodes 6 --num_video_episodes 24 --algo_name hiql --way_steps 10 --sparse_data 0 --expert_data_On 0 --spherical_On 0 --rep_type state --mapping_threshold 0 --rep_normalizing_On 1 --rep_dim 10 --hilp_skill_dim 0 --keynode_dim 10 --build_keynode_time during_training --keynode_num 300 --kmean_weight_On 1 --use_goal_info_On 0 --kmean_weight_type rtg_uniform --specific_dim_On 0 --keynode_ratio 0.0 --use_keynode_in_eval_On 0 \
         --relative_dist_in_eval_On 0 --mapping_method nearest \
-        --value_function_num ${value_function_num}
+        --value_function_num ${value_function_num} --small_subgoal_space 1
+        # --use_rep ''
     # --low_dim_clustering ${low_dim_clustering}
 
 done

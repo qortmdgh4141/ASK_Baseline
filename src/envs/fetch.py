@@ -14,7 +14,13 @@ def fetch_load(env_name, data):
     dones_float = np.zeros((data['o'].shape[0],data['o'].shape[1]-1))
     dones_float[:,-1] = 1
     dones_float = dones_float.reshape(-1)
-    
+    config = {'observation_min':data['o'].min(),
+            'observation_max':data['o'].max(),
+            'observation_dim':data['o'].shape[-1],
+            'action_min':data['u'].min(),
+            'action_max':data['u'].max(),
+            'action_dim':data['u'].shape[-1],
+            }
     return Dataset.create(
             observations=observations.astype(np.float32),
             actions=data['u'].reshape(-1, data['u'].shape[-1]).astype(np.float32),
@@ -26,7 +32,7 @@ def fetch_load(env_name, data):
             returns = np.ones_like(dones_float).astype(np.float32),
             # goal_info = data['g'],
             goal_info = data['g'].reshape(-1, data['g'].shape[-1]),
-            ), None
+            ), None, config
 
 def reach_goal(env_name, state, desired_goal):
     epsilon = 0.05

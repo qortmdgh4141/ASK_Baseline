@@ -55,6 +55,16 @@ def compute_actor_loss(agent, batch, network_params):
     exp_a = jnp.exp(adv * agent.config['temperature'])
     exp_a = jnp.minimum(exp_a, 100.0)
 
+    if agent.config['small_subgoal_space']:
+        if 'Fetch' in agent.config['env_name']:
+            if 'Reach' in agent.config['env_name']:
+                cur_goals = cur_goals[:,:3]
+                observations = observations[:,:3]
+            else:
+                cur_goals = cur_goals[:,3:6]
+                observations = observations[:,3:6]
+        cur_goals = cur_goals[:,:3]
+    
     dist = agent.network(observations, cur_goals, state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
     log_probs = dist.log_prob(batch['actions'])
     actor_loss = -(exp_a * log_probs).mean()
@@ -121,11 +131,12 @@ def compute_high_actor_loss(agent, batch, network_params):
         target = agent.network(observations=high_targets, method='hilp_phi')
     elif 'Fetch' in agent.config['env_name']:
         target = high_targets - observations
-        if 'Reach' in agent.config['env_name']:
+        if agent.config['small_subgoal_space']:
+            pass
+        elif 'Reach' in agent.config['env_name']:
             target = target[:,:3]
         else:
             target = target[:,3:6]
-            
     else:
         target = high_targets - observations
     
@@ -543,7 +554,7 @@ def create_learner(
         visual: int = 0,
         encoder: str = 'impala', # 'impala_small'
         key_nodes : Any = None,
-        flag : Any =None,
+        flag : Any = None,
         **kwargs):
         print('Extra kwargs:', kwargs)
         
@@ -609,8 +620,8 @@ def create_learner(
             high_action_dim = flag.hilp_skill_dim
         elif flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
             high_action_dim = rep_dim
-        elif 'Fetch' in flag.env_name:
-            high_action_dim = goals.shape[-1]
+        elif 'Fetch' in flag.env_name and flag.small_subgoal_space:
+                high_action_dim = goals.shape[-1]
         else:
             high_action_dim = observations.shape[-1]
             
@@ -652,11 +663,14 @@ def create_learner(
             params['networks_hilp_target_value'] = params['networks_hilp_value'] # hilp
 
         network = network.replace(params=freeze(params))
-        config = flax.core.FrozenDict(dict(
-            discount=discount, temperature=temperature, high_temperature=high_temperature,
-            target_update_rate=tau, pretrain_expectile=pretrain_expectile, way_steps=way_steps, keynode_ratio=flag.keynode_ratio, 
-            env_name=kwargs['env_name'], use_rep=flag.use_rep, vae_recon_coe=flag.vae_recon_coe, vae_kl_coe=flag.vae_kl_coe, value_function_num=flag.value_function_num, pseudo_obs=flag.pseudo_obs,
-        ))
+        # config = flax.core.FrozenDict(dict(
+        #     discount=discount, temperature=temperature, high_temperature=high_temperature,
+        #     target_update_rate=tau, pretrain_expectile=pretrain_expectile, way_steps=way_steps, keynode_ratio=flag.keynode_ratio, 
+        #     env_name=kwargs['env_name'], use_rep=flag.use_rep, vae_recon_coe=flag.vae_recon_coe, vae_kl_coe=flag.vae_kl_coe, value_function_num=flag.value_function_num, pseudo_obs=flag.pseudo_obs, small_subgoal_space=flag.small_subgoal_space,
+        # ))
+        
+        flag_dict = flag.flag_values_dict()
+        config = flax.core.FrozenDict(**flag_dict, **{'target_update_rate':tau})
 
         return JointTrainAgent(rng, network=network, critic=None, value=None, target_value=None, actor=None, config=config, key_nodes=key_nodes)
 
