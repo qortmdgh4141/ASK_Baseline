@@ -50,9 +50,32 @@ def kitchen_render(kitchen_env, wh=64):
     img = camera.render()
     return img
 
+def ant_render(ant_env):
+    
+
+    pass
+
+
 def env_step(env_name, env, action):
     if 'antmaze' in env_name:
         next_observation, reward, done, info = env.step(action)
+        if 'topview' in env_name:
+            # 근접 top view 전환
+            env.viewer.cam.lookat[0] = next_observation[0]
+            env.viewer.cam.lookat[1] = next_observation[1]
+            env.viewer.cam.lookat[2] = 0
+            env.viewer.cam.azimuth = 90.
+            env.viewer.cam.distance = 6
+            env.viewer.cam.elevation = -60
+
+            next_observation = {'image' : env.render(mode='rgb_array', width=64, height=64),
+                               'state': next_observation[2:]}
+            # 원거리 top view 전환, rendering 용
+            env.viewer.cam.lookat[0] = 18
+            env.viewer.cam.lookat[1] = 12
+            env.viewer.cam.distance = 50
+            env.viewer.cam.elevation = -90
+                
     elif 'kitchen' in env_name:
         next_observation, reward, done, info = env.step(action)
         if 'visual' in env_name:
@@ -69,7 +92,7 @@ def env_step(env_name, env, action):
     else:
         raise NotImplementedError
     
-    return next_observation, reward, done, info
+    return next_observation, reward, done, info, env
 
 def convert_input_to_low_dim(flags, key_nodes, input_obs):
     if 'tsne' in flags.low_dim_clustering: 
@@ -96,9 +119,17 @@ def evaluate_with_trajectories(
         observation, done = env.reset(), False
         # Set goal
         if 'antmaze' in env_name:
-            goal = env.wrapped_env.target_goal
-            obs_goal = base_observation.copy()
-            obs_goal[:2] = goal
+            if 'topview' in env_name:
+                observation = {'image' : env.render(mode='rgb_array', width=64, height=64),
+                               'state': observation[2:]}
+                obs_goal = {'image': goal_info['image'].squeeze(0),
+                            'state': goal_info['state'].squeeze(0)}
+                
+            else:
+                goal = env.wrapped_env.target_goal
+                obs_goal = base_observation.copy()
+                obs_goal[:2] = goal
+                
             node_dim = np.arange(2)
             interval, min_dist = 10, 4
         elif 'kitchen' in env_name:
@@ -147,10 +178,11 @@ def evaluate_with_trajectories(
             obs_goal =  encoder_fn(observations=jnp.expand_dims(obs_goal, axis=0))[0]
         
         while not done:
-            if FLAGS.use_rep == "vae_encoder" :
-                observation,_ ,_ = encoder_fn(observation=observation)
-            elif FLAGS.use_rep == "hilp_encoder" :
-                observation =  encoder_fn(observations=jnp.expand_dims(observation, axis=0))[0]
+            # if FLAGS.use_rep == "vae_encoder" :
+            #     observation,_ ,_ = encoder_fn(observation=observation)
+            # elif FLAGS.use_rep == "hilp_encoder" :
+            #     observation =  encoder_fn(observations=jnp.expand_dims(observation, axis=0))[0]
+            
             if h_step == interval or dist < init_dist * 0.5:
                 cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=eval_temperature)
                 if FLAGS.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
@@ -204,17 +236,7 @@ def evaluate_with_trajectories(
             cur_obs_goal_rep = cur_obs_goal                
             action = policy_fn(observations=observation, goals=cur_obs_goal_rep, low_dim_goals=True, temperature=eval_temperature)
             
-            next_observation, reward, done, info = env_step(env_name, env, action)
-            # if 'antmaze' in env_name:
-            #     next_observation, r, done, info = env.step(action)
-            # elif 'kitchen' in env_name:
-            #     next_observation, r, done, info = env.step(action)
-            #     next_observation = next_observation[:30]
-            # elif 'calvin' in env_name:
-            #     next_observation, r, done, info = env.step({'ac': np.array(action)})
-            #     next_observation = next_observation['ob']
-            #     del info['robot_info']
-            #     del info['scene_info']
+            next_observation, reward, done, info, env = env_step(env_name, env, action)
 
             step += 1
 
@@ -238,22 +260,30 @@ def evaluate_with_trajectories(
                     rep_trajectory.append(cur_obs_delta)
                 if 'antmaze' in env_name:
                     size = 240
-                    box_size = 0.008
-                    cur_frame = env.render(mode='rgb_array', width=size, height=size).transpose(2, 0, 1).copy()
-                    if ('large' in env_name or 'ultra' in env_name):
-                        def xy_to_pixxy(x, y):
-                            if 'large' in env_name:
-                                pixx = (x / 36) * (0.93 - 0.07) + 0.07
-                                pixy = (y / 24) * (0.21 - 0.79) + 0.79
-                            elif 'ultra' in env_name:
-                                pixx = (x / 52) * (0.955 - 0.05) + 0.05
-                                pixy = (y / 36) * (0.19 - 0.81) + 0.81
-                            return pixx, pixy
-      
-                        x_sub_goal, y_sub_goal = cur_obs_sub_goal[:2]
-                        sub_pixx, sub_pixy = xy_to_pixxy(x_sub_goal, y_sub_goal)
-                        cur_frame[:3, int((sub_pixy - box_size) * size):int((sub_pixy + box_size) * size), int((sub_pixx - box_size) * size):int((sub_pixx + box_size) * size)] = 160
-                    render.append(cur_frame)
+                    if 'topview' in env_name:
+                        # wandb log용 원거리 topview 전환
+
+                        cur_frame = env.render(mode='rgb_array', width=size, height=size).transpose(2, 0, 1).copy()
+                        render.append(cur_frame)
+                        
+                    else:
+                            
+                        box_size = 0.008
+                        cur_frame = env.render(mode='rgb_array', width=size, height=size).transpose(2, 0, 1).copy()
+                        if ('large' in env_name or 'ultra' in env_name):
+                            def xy_to_pixxy(x, y):
+                                if 'large' in env_name:
+                                    pixx = (x / 36) * (0.93 - 0.07) + 0.07
+                                    pixy = (y / 24) * (0.21 - 0.79) + 0.79
+                                elif 'ultra' in env_name:
+                                    pixx = (x / 52) * (0.955 - 0.05) + 0.05
+                                    pixy = (y / 36) * (0.19 - 0.81) + 0.81
+                                return pixx, pixy
+        
+                            x_sub_goal, y_sub_goal = cur_obs_sub_goal[:2]
+                            sub_pixx, sub_pixy = xy_to_pixxy(x_sub_goal, y_sub_goal)
+                            cur_frame[:3, int((sub_pixy - box_size) * size):int((sub_pixy + box_size) * size), int((sub_pixx - box_size) * size):int((sub_pixx + box_size) * size)] = 160
+                        render.append(cur_frame)
                 elif 'kitchen' in env_name:
                     render.append(kitchen_render(env, wh=200).transpose(2, 0, 1))
                 elif 'calvin' in env_name:

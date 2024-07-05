@@ -11,7 +11,6 @@ project = sys.argv[sys.argv.index('--project') + 1] if '--project' in sys.argv e
 
 import jax
 import flax
-import gzip
 import tqdm
 import time
 import wandb
@@ -35,7 +34,7 @@ from jaxrl_m.evaluation import supply_rng, evaluate_with_trajectories, EpisodeMo
 FLAGS = flags.FLAGS
 flags.DEFINE_string('save_dir', f'/home/spectrum/study/experiment_output/', '')
 flags.DEFINE_string('run_group', 'EXP', '')
-flags.DEFINE_string('env_name', 'FetchPush-v1-mixed', '') # 'FetchPush-v1
+flags.DEFINE_string('env_name', 'visual-FetchPush-v1-mixed', '') # 'FetchPush-v1
 # flags.DEFINE_string('env_name', 'antmaze-ultra-diverse-v0', '')
 flags.DEFINE_string('project', 'test', '')
 flags.DEFINE_string('algo_name', 'hiql', '')
@@ -44,7 +43,7 @@ flags.DEFINE_integer('gpu', 0, '')
 flags.DEFINE_integer('seed', 0, '')
 flags.DEFINE_integer('batch_size', 1024, '')
 flags.DEFINE_integer('pretrain_steps', 500002, '')
-flags.DEFINE_integer('eval_interval', 1000, '')
+flags.DEFINE_integer('eval_interval', 100, '')
 flags.DEFINE_integer('save_interval', 100000, '')
 flags.DEFINE_integer('log_interval', 1000, '')
 flags.DEFINE_integer('eval_episodes', 1, '')
@@ -200,11 +199,10 @@ def main(_):
     if 'SLURM_RESTART_COUNT' in os.environ:
         exp_name += f'rs_{os.environ["SLURM_RESTART_COUNT"]}.'
         
-    if 'visual' in FLAGS.env_name:
+    if 'visual' in FLAGS.env_name or 'topview' in FLAGS.env_name or FLAGS.visual == 1:
         FLAGS.visual = 1
         FLAGS.p_aug = 0.5
-        
-    if FLAGS.visual:
+        FLAGS.high_p_randomgoal = 0.0
         FLAGS.batch_size = 256
 
     FLAGS.gcdataset['p_randomgoal'] = FLAGS.p_randomgoal
@@ -231,7 +229,7 @@ def main(_):
     if FLAGS.visual:
         FLAGS.actor_hidden_dim = 512
         FLAGS.actor_num_layers = 3
-        assert FLAGS.use_rep != '0'
+        assert FLAGS.use_rep != ''
     else:
         FLAGS.actor_hidden_dim = 256
         FLAGS.actor_num_layers = 2
@@ -273,133 +271,26 @@ def main(_):
     
     np.random.seed(FLAGS.seed)
     tf.random.set_seed(FLAGS.seed)
-
-    env_name = FLAGS.env_name
-    if 'antmaze' in FLAGS.env_name:
-        if 'ultra' in FLAGS.env_name:
-            import d4rl_ext
-            import gym
-            env = gym.make(env_name)
-            env = EpisodeMonitor(env)
-            env.seed(FLAGS.seed)
-        else:
-            env = d4rl_utils.make_env(env_name)
-            env.seed(FLAGS.seed)   
-        dataset, episode_index, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
-        dataset = dataset.copy({'rewards': dataset['rewards'] - 1.0})
-        env.render(mode='rgb_array', width=500, height=500)
-        if 'large' in FLAGS.env_name:
-            env.viewer.cam.lookat[0] = 18
-            env.viewer.cam.lookat[1] = 12
-            env.viewer.cam.distance = 50
-            env.viewer.cam.elevation = -90
-            viz_env, viz_dataset = d4rl_ant.get_env_and_dataset(env_name)
-            viz = ant_diagnostics.Visualizer(env_name, viz_env, viz_dataset, discount=FLAGS.discount)
-            init_state = np.copy(viz_dataset['observations'][0])
-            init_state[:2] = (12.5, 8)
-        elif 'ultra' in FLAGS.env_name:
-            env.viewer.cam.lookat[0] = 26
-            env.viewer.cam.lookat[1] = 18
-            env.viewer.cam.distance = 70
-            env.viewer.cam.elevation = -90
-        else:
-            env.viewer.cam.lookat[0] = 18
-            env.viewer.cam.lookat[1] = 12
-            env.viewer.cam.distance = 50
-            env.viewer.cam.elevation = -90
-    elif 'kitchen' in FLAGS.env_name:
-        if 'visual' in FLAGS.env_name:
-            from src.d4rl_utils import kitchen_render
-            orig_env_name = FLAGS.env_name.split('visual-')[1]
-            env = d4rl_utils.make_env(orig_env_name)
-            cur_folder = os.path.dirname(__file__)
-            dataset = dict(np.load(os.path.join(cur_folder, f'data/d4rl_kitchen_rendered_kitchen-mixed-v0.npz'))) 
-            dataset, episode_index, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, dataset=dataset, filter_terminals=True, flag=FLAGS)
-
-            state = env.reset()
-            # Random example state from the dataset for proprioceptive states
-            goal_state = [-2.3403780e+00, -1.3053924e+00, 1.1021180e+00, -1.8613019e+00, 1.5087037e-01, 1.7687809e+00, 1.2525779e+00, 2.9698312e-02, 3.0899283e-02, 3.9908718e-04, 4.9550228e-05, -1.9946630e-05, 2.7519276e-05, 4.8786267e-05, 3.2835731e-05, 2.6504624e-05, 3.8422750e-05, -6.9888681e-01, -5.0150707e-02, 3.4855098e-01, -9.8701166e-03, -7.6958216e-03, -8.0031347e-01, -1.9142720e-01, 7.2064394e-01, 1.6191028e+00, 1.0021452e+00, -3.2998802e-04, 3.7205056e-05, 5.3616576e-02]
-            goal_state[9:] = state[39:]  # Set goal object states
-            env.sim.set_state(np.concatenate([goal_state, env.init_qvel]))
-            env.sim.forward()
-            goal_info = {
-                'ob': kitchen_render(env).astype(np.float32),
-            }
-            env.seed(FLAGS.seed)
-            env.reset()
-        else:
-            env = d4rl_utils.make_env(FLAGS.env_name)
-            env.seed(FLAGS.seed)
-            dataset, episode_index, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, filter_terminals=True)
-            dataset = dataset.copy({'observations': dataset['observations'][:, :30], 'next_observations': dataset['next_observations'][:, :30]})
-    elif 'calvin' in FLAGS.env_name:
-        from src.envs.calvin import CalvinEnv
-        from hydra import compose, initialize
-        from src.envs.gym_env import GymWrapper
-        from src.envs.gym_env import wr4ap_env
-        initialize(config_path='src/envs/conf')
-        cfg = compose(config_name='calvin')
-        env = CalvinEnv(**cfg)
-        env.seed(FLAGS.seed)
-        env.max_episode_steps = cfg.max_episode_steps = 360
-        env = GymWrapper(
-            env=env,
-            from_pixels=cfg.pixel_ob,
-            from_state=cfg.state_ob,
-            height=cfg.screen_size[0],
-            width=cfg.screen_size[1],
-            channels_first=False,
-            frame_skip=cfg.action_repeat,
-            return_state=False,
-        )
-        env = wrap_env(env, cfg)
-        data = pickle.load(gzip.open(os.path.dirname(os.path.realpath(__file__)) + '/data/calvin.gz', "rb")) # 현재 실행되는 파일 위치에서 calvin 파일 찾음
-        ds = []
-        episode_index = 0
-        for i, d in enumerate(data):
-            if len(d['obs']) < len(d['dones']):
-                continue  # Skip incomplete trajectories.
-            # Only use the first 21 states of non-floating objects.
-            d['obs'] = d['obs'][:, :21]
-            new_d = dict(
-                observations=d['obs'][:-1],
-                next_observations=d['obs'][1:],
-                actions=d['actions'][:-1],
-                episodes = [episode_index]*len(d['obs'][:-1])
-            )
-            num_steps = new_d['observations'].shape[0]
-            new_d['rewards'] = np.zeros(num_steps)
-            new_d['terminals'] = np.zeros(num_steps, dtype=bool)
-            new_d['terminals'][-1] = True
-            ds.append(new_d)
-            episode_index +=1
-        dataset = dict()
-        for key in ds[0].keys():
-            dataset[key] = np.concatenate([d[key] for d in ds], axis=0)
-        dataset, episode_index = d4rl_utils.get_dataset(env, FLAGS.env_name, dataset=dataset, flags=FLAGS)
-    elif 'Fetch' in FLAGS.env_name:
-        import gymnasium as gym
-        from src.envs.fetch import fetch_load, FetchGoalWrapper
-        
-        env = gym.make(FLAGS.env_name.split('-')[0], render_mode='rgb_array',  max_episode_steps=50)
-        env.reset(seed=FLAGS.seed)
-        env = FetchGoalWrapper(env, FLAGS.env_name)
-        env = EpisodeMonitor(env)
-        # 'FetchPick-v1-expert'
-        env_name, version, type_ = FLAGS.env_name.split('-')
-        dataset_file = os.path.join(f'/home/spectrum/study/ASK_Baseline/data/{type_}/{env_name}/buffer.pkl')
-        with open(dataset_file, 'rb') as f:
-            dataset = pickle.load(f)
-            print(f'{dataset_file}, fetch dataset loaded')
-        dataset, episode_index, dataset_config = fetch_load(FLAGS.env_name, dataset)
-        # dataset, episode_index = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
-        
-    else:
-        raise NotImplementedError
+    
+    # 0704 : env, dataset 생성 코드를 함수화
+    env, dataset, episode_index, dataset_config = d4rl_utils.make_env_get_dataset(FLAGS)
 
     total_steps = FLAGS.pretrain_steps
-    example_observation = dataset['observations'][0, np.newaxis]
+    
+    # 0704 : top view 환경에서 example obs, goal 생성 추가
+    if 'topview' in FLAGS.env_name:
+        example_observation = {'image': dataset['observations']['image'][0, np.newaxis],
+                               'state' : dataset['observations']['state'][0, np.newaxis]}
+        target_idx = 38190
+        example_goals = {'image': dataset['observations']['image'][target_idx, np.newaxis],
+                         'state' : dataset['observations']['state'][target_idx, np.newaxis]}
+        goal_info = example_goals
+    else:
+        example_observation = dataset['observations'][0, np.newaxis]
     example_action = dataset['actions'][0, np.newaxis]
+    
+    
+    
     if 'Fetch' in FLAGS.env_name:
         example_goals = dataset['goal_info'][0, np.newaxis]
     else:
@@ -419,57 +310,59 @@ def main(_):
                                    flag=FLAGS,
                                    **FLAGS.config)
     
-    if FLAGS.visual == 1:
-        encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
-        if FLAGS.rep_type == 'concat':
-            rep_observations = d4rl_utils.get_rep_observation_spherical_in_visual(encoder_fn, dataset, FLAGS)
-        elif FLAGS.rep_type == 'state':
-            rep_observations = d4rl_utils.get_rep_observation_goal_only_in_visual(encoder_fn, dataset, FLAGS)
-        dataset = d4rl_utils.add_data(dataset, rep_observations=rep_observations)
+    # if FLAGS.visual == 1:
+    #     encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
+    #     if FLAGS.rep_type == 'concat':
+    #         rep_observations = d4rl_utils.get_rep_observation_spherical_in_visual(encoder_fn, dataset, FLAGS)
+    #     elif FLAGS.rep_type == 'state':
+    #         rep_observations = d4rl_utils.get_rep_observation_goal_only_in_visual(encoder_fn, dataset, FLAGS)
+    #     dataset = d4rl_utils.add_data(dataset, rep_observations=rep_observations)
     
-    elif FLAGS.use_rep == "hiql_goal_encoder":
-        encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
-        # 0610 승호수정 spherical
-        if FLAGS.rep_type == 'concat':
-            rep_observations = d4rl_utils.get_rep_observation_spherical(encoder_fn, dataset, FLAGS)
-        elif FLAGS.rep_type == 'state':
-            rep_observations = d4rl_utils.get_rep_observation_goal_only(encoder_fn, dataset, FLAGS)
-        dataset = d4rl_utils.add_data(dataset, rep_observations=rep_observations)
+    # elif FLAGS.use_rep == "hiql_goal_encoder":
+    #     encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
+    #     # 0610 승호수정 spherical
+    #     if FLAGS.rep_type == 'concat':
+    #         rep_observations = d4rl_utils.get_rep_observation_spherical(encoder_fn, dataset, FLAGS)
+    #     elif FLAGS.rep_type == 'state':
+    #         rep_observations = d4rl_utils.get_rep_observation_goal_only(encoder_fn, dataset, FLAGS)
+    #     dataset = d4rl_utils.add_data(dataset, rep_observations=rep_observations)
         
-    elif FLAGS.use_rep == "vae_encoder":
-        encoder_fn = jax.jit(jax.vmap(agent.get_vae_state_rep))
-        rep_observations = d4rl_utils.get_rep_observation(encoder_fn, dataset, FLAGS)
-        dataset = d4rl_utils.add_data(dataset, rep_observations=rep_observations)
+    # elif FLAGS.use_rep == "vae_encoder":
+    #     encoder_fn = jax.jit(jax.vmap(agent.get_vae_state_rep))
+    #     rep_observations = d4rl_utils.get_rep_observation(encoder_fn, dataset, FLAGS)
+    #     dataset = d4rl_utils.add_data(dataset, rep_observations=rep_observations)
             
-    elif FLAGS.use_rep in ["hilp_subgoal_encoder", "hilp_encoder"]:
-        encoder_fn = jax.jit(jax.vmap(agent.get_hilp_phi))
-        rep_observations = d4rl_utils.get_hilp_rep_observation(encoder_fn, dataset, FLAGS)
-        if FLAGS.kmean_weight_type == 'hilbert_td':
-            dataset = d4rl_utils.hilp_add_data(dataset, rep_observations=rep_observations)
-        elif FLAGS.kmean_weight_type in ['rtg_discount', 'rtg_uniform']:
-            dataset = d4rl_utils.add_data(dataset, rep_observations=rep_observations)
+    # elif FLAGS.use_rep in ["hilp_subgoal_encoder", "hilp_encoder"]:
+    #     encoder_fn = jax.jit(jax.vmap(agent.get_hilp_phi))
+    #     rep_observations = d4rl_utils.get_hilp_rep_observation(encoder_fn, dataset, FLAGS)
+    #     if FLAGS.kmean_weight_type == 'hilbert_td':
+    #         dataset = d4rl_utils.hilp_add_data(dataset, rep_observations=rep_observations)
+    #     elif FLAGS.kmean_weight_type in ['rtg_discount', 'rtg_uniform']:
+    #         dataset = d4rl_utils.add_data(dataset, rep_observations=rep_observations)
             
         
-    if FLAGS.config['build_keynode_time'] in ["pre_training", "during_training"]:       
-        key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index= episode_index)
-        if FLAGS.use_rep in ["hiql_goal_encoder", "vae_encoder", "hilp_subgoal_encoder", "hilp_encoder"]:
-            # 0610 승호수정 spherical
-            key_nodes.construct_nodes(rep_observations=rep_observations, spherical_On=FLAGS.spherical_On)
-        else:
-            # 0621 태건 수정 rep 사용하지 않을때 arg 없이 construct node
-            key_nodes.construct_nodes() 
+    # if FLAGS.config['build_keynode_time'] in ["pre_training", "during_training"]:       
+    #     key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index= episode_index)
+    #     if FLAGS.use_rep in ["hiql_goal_encoder", "vae_encoder", "hilp_subgoal_encoder", "hilp_encoder"]:
+    #         # 0610 승호수정 spherical
+    #         key_nodes.construct_nodes(rep_observations=rep_observations, spherical_On=FLAGS.spherical_On)
+    #     else:
+    #         # 0621 태건 수정 rep 사용하지 않을때 arg 없이 construct node
+    #         key_nodes.construct_nodes() 
             
-        find_key_node = jax.jit(key_nodes.find_closest_node)
-        agent = agent.replace(key_nodes = key_nodes.pos)
-    else:
-        key_nodes, find_key_node = None, None
+    #     find_key_node = jax.jit(key_nodes.find_closest_node)
+    #     agent = agent.replace(key_nodes = key_nodes.pos)
+    # else:
+    #     key_nodes, find_key_node = None, None
         
-    if FLAGS.sparse_data:
-        dataset = d4rl_utils.sparse_data(dataset, sparse_data_index=sparse_data_index)
+    # if FLAGS.sparse_data:
+    #     dataset = d4rl_utils.sparse_data(dataset, sparse_data_index=sparse_data_index)
 
-    pretrain_dataset = GCSDataset(dataset, find_key_node=find_key_node, **FLAGS.gcdataset.to_dict())
+    pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
+    # pretrain_dataset = GCSDataset(dataset, find_key_node=find_key_node, **FLAGS.gcdataset.to_dict())
 
-        
+    key_nodes, find_key_node = None, None
+    
     encoder_fn = None
     decoder_fn = None
     value_goal_fn = None
@@ -489,24 +382,26 @@ def main(_):
     base_observation = jax.tree_map(lambda arr: arr[0], pretrain_dataset.dataset['observations'])
     observation = env.reset()
     
-    if 'antmaze' in env_name:
-        goal = env.wrapped_env.target_goal
-        goal_info = base_observation.copy()
-        goal_info[:2] = goal
-    elif 'kitchen' in env_name:
-        if 'visual' not in env_name:
-            observation, goal_info = observation[:30].copy(), observation[30:].copy()
-            goal_info[:9] = base_observation[:9]
-    elif 'calvin' in env_name:
-        observation = observation['ob']
-        goal = np.array([0.25, 0.15, 0, 0.088, 1, 1])
-        goal_info = base_observation.copy()
-        goal_info[15:21] = goal
-    elif 'Fetch' in env_name:
-        state, _  = env.reset()
-        base_observation, goal_info = state['observation'], state['desired_goal']
-    else:
-        raise NotImplementedError
+    env_name = FLAGS.env_name
+    
+    # if 'antmaze' in env_name:
+    #     goal = env.wrapped_env.target_goal
+    #     goal_info = base_observation.copy()
+    #     goal_info[:2] = goal
+    # elif 'kitchen' in env_name:
+    #     if 'visual' not in env_name:
+    #         observation, goal_info = observation[:30].copy(), observation[30:].copy()
+    #         goal_info[:9] = base_observation[:9]
+    # elif 'calvin' in env_name:
+    #     observation = observation['ob']
+    #     goal = np.array([0.25, 0.15, 0, 0.088, 1, 1])
+    #     goal_info = base_observation.copy()
+    #     goal_info[15:21] = goal
+    # elif 'Fetch' in env_name:
+    #     state, _  = env.reset()
+    #     base_observation, goal_info = state['observation'], state['desired_goal']
+    # else:
+    #     raise NotImplementedError
     
     train_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'train.csv'))
     eval_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'eval.csv'))
@@ -536,41 +431,41 @@ def main(_):
             wandb.log(train_metrics, step=i)
             train_logger.log(train_metrics, step=i)
                 
-        if FLAGS.use_rep=="vae_encoder" and FLAGS.config['build_keynode_time']=="during_training" and not(i % FLAGS.eval_interval == 0) :
-            encoder_fn = jax.jit(jax.vmap(agent.get_vae_state_rep))
-            rep_observations = d4rl_utils.get_rep_observation(encoder_fn, dataset, FLAGS)
-            dataset = d4rl_utils.add_data(dataset, rep_observations)
-            key_nodes.construct_nodes(rep_observations=rep_observations)                
-            find_key_node = jax.jit(key_nodes.find_closest_node)
-            pretrain_dataset = GCSDataset(dataset, find_key_node = find_key_node, encoder_fn=encoder_fn, **FLAGS.gcdataset.to_dict())
+        # if FLAGS.use_rep=="vae_encoder" and FLAGS.config['build_keynode_time']=="during_training" and not(i % FLAGS.eval_interval == 0) :
+        #     encoder_fn = jax.jit(jax.vmap(agent.get_vae_state_rep))
+        #     rep_observations = d4rl_utils.get_rep_observation(encoder_fn, dataset, FLAGS)
+        #     dataset = d4rl_utils.add_data(dataset, rep_observations)
+        #     key_nodes.construct_nodes(rep_observations=rep_observations)                
+        #     find_key_node = jax.jit(key_nodes.find_closest_node)
+        #     pretrain_dataset = GCSDataset(dataset, find_key_node = find_key_node, encoder_fn=encoder_fn, **FLAGS.gcdataset.to_dict())
 
         if i == 1 or i % FLAGS.eval_interval == 0:
-            if FLAGS.use_rep in ["hilp_subgoal_encoder", "hilp_encoder"]:
-                encoder_fn = jax.jit(jax.vmap(agent.get_hilp_phi))
-                rep_observations = d4rl_utils.get_hilp_rep_observation(encoder_fn, dataset, FLAGS)
-            elif FLAGS.use_rep == "hiql_goal_encoder":
-                encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
-                # 0610 승호수정 spherical
-                if FLAGS.rep_type == 'concat':
-                    rep_observations = d4rl_utils.get_rep_observation_spherical(encoder_fn, dataset, FLAGS)
-                elif FLAGS.rep_type == 'state':
-                    rep_observations = d4rl_utils.get_rep_observation_goal_only(encoder_fn, dataset, FLAGS)
-            elif FLAGS.use_rep != '':
-                if FLAGS.kmean_weight_type == 'hilbert_td' :
-                    dataset = d4rl_utils.hilp_add_data(dataset, rep_observations)
-                elif FLAGS.kmean_weight_type in ['rtg_discount', 'rtg_uniform']:
-                    dataset = d4rl_utils.add_data(dataset, rep_observations)
+            # if FLAGS.use_rep in ["hilp_subgoal_encoder", "hilp_encoder"]:
+            #     encoder_fn = jax.jit(jax.vmap(agent.get_hilp_phi))
+            #     rep_observations = d4rl_utils.get_hilp_rep_observation(encoder_fn, dataset, FLAGS)
+            # elif FLAGS.use_rep == "hiql_goal_encoder":
+            #     encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
+            #     # 0610 승호수정 spherical
+            #     if FLAGS.rep_type == 'concat':
+            #         rep_observations = d4rl_utils.get_rep_observation_spherical(encoder_fn, dataset, FLAGS)
+            #     elif FLAGS.rep_type == 'state':
+            #         rep_observations = d4rl_utils.get_rep_observation_goal_only(encoder_fn, dataset, FLAGS)
+            # elif FLAGS.use_rep != '':
+            #     if FLAGS.kmean_weight_type == 'hilbert_td' :
+            #         dataset = d4rl_utils.hilp_add_data(dataset, rep_observations)
+            #     elif FLAGS.kmean_weight_type in ['rtg_discount', 'rtg_uniform']:
+            #         dataset = d4rl_utils.add_data(dataset, rep_observations)
                     
-            if FLAGS.use_rep in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder"]:
-                # key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index= episode_index)
-                # 0610 승호수정 spherical
-                key_nodes.construct_nodes(rep_observations=rep_observations, spherical_On=FLAGS.spherical_On)
-                find_key_node = jax.jit(key_nodes.find_closest_node)
-                agent = agent.replace(key_nodes = key_nodes.pos)
-                pretrain_dataset = GCSDataset(dataset, find_key_node = find_key_node, **FLAGS.gcdataset.to_dict())
+            # if FLAGS.use_rep in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder"]:
+            #     # key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index= episode_index)
+            #     # 0610 승호수정 spherical
+            #     key_nodes.construct_nodes(rep_observations=rep_observations, spherical_On=FLAGS.spherical_On)
+            #     find_key_node = jax.jit(key_nodes.find_closest_node)
+            #     agent = agent.replace(key_nodes = key_nodes.pos)
+            #     pretrain_dataset = GCSDataset(dataset, find_key_node = find_key_node, **FLAGS.gcdataset.to_dict())
             
             eval_episodes = 1 if i == 1 else FLAGS.eval_episodes
-            num_video_episodes = 0 if i == 1 else FLAGS.num_video_episodes
+            num_video_episodes = 1 if i == 1 else FLAGS.num_video_episodes
             
             policy_fn = partial(supply_rng(agent.sample_actions))
             high_policy_fn = partial(supply_rng(agent.sample_high_actions))
@@ -597,10 +492,10 @@ def main(_):
                     key_nodes=key_nodes,
                     FLAGS=FLAGS
                 )
-            value_map = plot_value_map(agent, base_observation, goal_info, i, g_start_time)
+            # value_map = plot_value_map(agent, base_observation, goal_info, i, g_start_time)
             
             eval_metrics = {f'evaluation/{k}': v for k, v in eval_info.items()}
-            eval_metrics['value_map'] = wandb.Image(value_map)
+            # eval_metrics['value_map'] = wandb.Image(value_map)
             
             if FLAGS.num_video_episodes > 0 and len(renders):
                 video = record_video('Video', i, renders=renders)
@@ -633,18 +528,18 @@ def main(_):
                     rep_trajectory_fname = os.path.join(FLAGS.save_dir, f'rep_trajectories_{i}.pkl')
                     with open(rep_trajectory_fname, 'wb') as f:
                         pickle.dump(np.array(rep_trajectories), f)
-                    all_state_fname = os.path.join(FLAGS.save_dir, f'all_state_{i}.pkl')
-                    with open(all_state_fname, 'wb') as f:
-                        pickle.dump(np.array(rep_observations), f)
+                    # all_state_fname = os.path.join(FLAGS.save_dir, f'all_state_{i}.pkl')
+                    # with open(all_state_fname, 'wb') as f:
+                    #     pickle.dump(np.array(rep_observations), f)
 
                 if FLAGS.spherical_On:
                     cos_distances_path = os.path.join(FLAGS.save_dir, f'cos_distances_{i}.pkl')
                     with open(cos_distances_path, 'wb') as f:
                         pickle.dump(np.array(cos_distances), f)
                 
-                key_node_fname = os.path.join(FLAGS.save_dir, f'key_node_{i}.pkl')
-                with open(key_node_fname, 'wb') as f:
-                    pickle.dump(np.array(key_nodes.pos), f)
+                # key_node_fname = os.path.join(FLAGS.save_dir, f'key_node_{i}.pkl')
+                # with open(key_node_fname, 'wb') as f:
+                #     pickle.dump(np.array(key_nodes.pos), f)
                 
                 fname = os.path.join(FLAGS.save_dir, f'params_{i}.pkl')
                 print(f'Saving to {fname}')

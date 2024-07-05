@@ -14,7 +14,7 @@ import flax.linen as nn
 from flax.core import freeze, unfreeze
 import ml_collections
 from . import iql
-from src.special_networks import Representation, HierarchicalActorCritic, RelativeRepresentation, MonolithicVF
+from src.special_networks import Representation, HierarchicalActorCritic, VisualHierarchicalActorCritic, RelativeRepresentation, MonolithicVF
 
 
 def expectile_loss(adv, diff, expectile=0.7):
@@ -276,7 +276,7 @@ def create_learner(
         high_policy_state_encoder = None
         high_policy_goal_encoder = None
         if visual:
-            assert use_rep
+            assert flag.use_rep
             from jaxrl_m.vision import encoders
 
             visual_encoder = encoders[encoder]
@@ -316,7 +316,8 @@ def create_learner(
             high_action_dim = goals.shape[-1]
         high_actor_def = Policy(actor_hidden_dims, action_dim=high_action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
 
-        network_def = HierarchicalActorCritic(
+        model = VisualHierarchicalActorCritic if flag.visual else HierarchicalActorCritic
+        network_def = model(
             encoders={
                 'value_state': value_state_encoder,
                 'value_goal': value_goal_encoder,

@@ -9,6 +9,17 @@ import ml_collections
 from typing import *
 from jaxrl_m.evaluation import supply_rng
 
+
+def random_crop(img, crop_from, padding):
+    padded_img = jnp.pad(img, ((padding, padding), (padding, padding), (0, 0)), mode='edge')
+    return jax.lax.dynamic_slice(padded_img, crop_from, img.shape)
+random_crop = jax.jit(random_crop, static_argnames=('padding',))
+
+
+def batched_random_crop(imgs, crop_froms, padding):
+    return jax.vmap(random_crop, (0, 0, None))(imgs, crop_froms, padding)
+batched_random_crop = jax.jit(batched_random_crop, static_argnames=('padding',))
+
 @dataclasses.dataclass
 class GCDataset:
     dataset: Dataset
@@ -189,8 +200,8 @@ class GCSDataset(GCDataset):
         
         if self.p_aug is not None:
             if np.random.rand() < self.p_aug:
-                aug_keys = ['observations', 'next_observations', 'goals', 'high_targets', 'high_goals']
-                padding = 3
+                aug_keys = ['observations', 'next_observations', 'goals', 'low_goals' 'high_targets', 'high_goals']
+                padding = 4 # kitchen : 3 , ant : 4
                 crop_froms = jnp.random.randint(0, 2 * padding + 1, (batch_size, 2))
                 crop_froms = jnp.concatenate([crop_froms, jnp.zeros((batch_size, 1), dtype=jnp.int32)], axis=1)
                 for key in aug_keys:
