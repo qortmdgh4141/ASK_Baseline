@@ -6,6 +6,9 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
 import jax
+from tqdm import tqdm
+from random import choice
+
 
 def build_keynodes(dataset, flags=None, episode_index= None):
     obs = dataset['observations'] 
@@ -36,17 +39,28 @@ def build_keynodes(dataset, flags=None, episode_index= None):
             non_value_index = dataset['returns'][sparse_data_index]==0            
             data_index=sparse_data_index 
             print(f'data : {len(sparse_data_index)}, non expert data : {non_value_index.sum()}, expert_data : {value_index.sum()}, ratio :  {np.round(value_index.sum() / len(sparse_data_index) * 100, 2)} %')
-            
+    else:
+        data_index = episode_index
+    
     if flags.kmean_weight_On:
         nodes = KeyNode(obs=obs[data_index], values=dataset['returns'][data_index], flags=flags)
     else:
         state_values = np.ones(obs.shape[0]).astype(np.float32) 
         nodes = KeyNode(obs=obs[data_index], values=state_values[data_index], flags=flags)
             
-    nodes.construct_nodes() 
+    nodes.construct_nodes(spherical_On=flags.spherical_On) 
     nodes.visualize_key_nodes(flags)
     
     return nodes, data_index
+
+def kmeans_pp_compute_distances(points, clusters):
+    def distance(p, c):
+        return jnp.linalg.norm(p - c)
+    def min_distance(point):
+        return jnp.min(jax.vmap(lambda c: distance(point, c))(clusters))
+    return jax.vmap(min_distance)(points)
+kmeans_pp_compute_distances_jit = jax.jit(kmeans_pp_compute_distances)
+
 
 class KeyNode(object):
     def __init__(self,
@@ -60,7 +74,15 @@ class KeyNode(object):
         self.obs = obs  
         self.f_s = np.array(obs) 
         self.values = values 
-
+        self.spherical_On = bool(flags.spherical_On)
+        if self.flags.specific_dim_On:
+            if 'ant' in self.env_name:
+                node_dim = 2
+            elif 'kitchen' in self.env_name:
+                node_dim = 9
+            elif 'calvin' in self.env_name:
+                node_dim = 15
+        self.node_dim = node_dim
         self.reduced_f_s = None  
         self.weighted_values = None
         self.labels = None  
@@ -81,56 +103,68 @@ class KeyNode(object):
             # 0610 승호수정 spherical
             self.rep_reduced_f_s, self.rep_weighted_values, self.rep_labels = self.sparse_node(f_s=self.rep_f_s, values=self.values, keynode_num = self.keynode_num, spherical_On=spherical_On)
             self.graph = self.create_nodes(reduced_f_s=self.rep_reduced_f_s, weighted_values=self.weighted_values)
-
+    
+    def init_kmeans_pp(self, points):
+        clusters = []
+        clusters.append(choice(points))  # first centroid is random point
+        for _ in tqdm(range(self.keynode_num - 1), desc="Initializing centroids"):  # for other centroids
+            distances = kmeans_pp_compute_distances_jit(points, jnp.array(clusters))
+            clusters.append(points[np.argmax(distances)])
+        return np.array(clusters)
+    
     def sparse_node(self,
                     f_s: np.ndarray,
                     values: np.ndarray,
                     keynode_num : int,
                     spherical_On : float):
         niter = 1  
+        nredo = 10
         verbose = True 
+        update_index = True
         d = f_s.shape[1]
+        max_points_per_centroid = self.f_s.shape[0] // self.keynode_num
+        self.keynode_dim = f_s.shape[1]
+        
 
         # 0610 승호수정 spherical
         self.spherical_On = bool(spherical_On) 
-        if self.spherical_On:
-            f_s = f_s / jnp.sqrt(d)
-        else:
-            f_s_max, f_s_min = np.max(f_s, axis=0),  np.min(f_s, axis=0)
-            f_s = (f_s - f_s_min) / (f_s_max - f_s_min)
-            self.scale_min, self.scale_max  = f_s_min, f_s_max
+        # if self.spherical_On:
+        #     f_s = f_s / np.sqrt(d)
+        # else:
+        #     f_s_max, f_s_min = np.max(f_s, axis=0),  np.min(f_s, axis=0)
+        #     f_s = (f_s - f_s_min) / (f_s_max - f_s_min)
+        #     self.scale_min, self.scale_max  = f_s_min, f_s_max
+        
+        scaled_f_s = f_s
+        # Initialize centroids using k-means++
+        init_centroids = self.init_kmeans_pp(scaled_f_s)
         
         # 0610 승호수정 spherical
-        kmeans = faiss.Kmeans(d, int(np.sqrt(f_s.shape[-1]))*keynode_num, niter=niter, verbose=verbose, gpu=True, nredo=10, seed=self.flags.seed, spherical=self.spherical_On)
-        kmeans.train(f_s, values) if self.kmean_weight_On else kmeans.train(f_s) # 질문 학습 전체 배치 한번에 수행하는거 아닌지? (배치단위로 수행한다하지 않았나?)
+        self.kmeans = faiss.Kmeans(d=self.keynode_dim, k=self.keynode_num, seed=self.flags.seed, spherical=self.spherical_On,
+                              niter=niter, nredo=nredo, max_points_per_centroid=max_points_per_centroid,  update_index=update_index, verbose=verbose, gpu=True)
         
-        # 0610 승호수정 spherical
-        if self.spherical_On:
-            initial_centroid = kmeans.centroids 
+        if self.kmean_weight_On: 
+            self.kmeans.train(x=scaled_f_s, weights=self.values, init_centroids=init_centroids)
         else:
-            normalized_centroid = kmeans.centroids
-            temp = (normalized_centroid - normalized_centroid.min(axis=0)) / (normalized_centroid.max(axis=0) - normalized_centroid.min(axis=0))
-            temp = np.unique(np.round(temp, decimals=(0 if len(np.unique(np.round(temp), axis=0)) >= keynode_num else 1)), axis=0)
-            normalized_centroid = temp * (normalized_centroid.max(axis=0) - normalized_centroid.min(axis=0)) + normalized_centroid.min(axis=0)
-            initial_centroid_index = np.random.choice(len(normalized_centroid), keynode_num)
-            initial_centroid = normalized_centroid[initial_centroid_index].astype(np.float32)
-
-        kmeans = faiss.Kmeans(d, keynode_num, niter=niter, verbose=verbose, gpu=True, nredo=10, seed=self.flags.seed, spherical=bool(spherical_On))
-        kmeans.train(f_s, values, initial_centroid) if self.kmean_weight_On else kmeans.train(f_s) # 질문 학습 전체 배치 한번에 수행하는거 아닌지? (배치단위로 수행한다하지 않았나?)
+            self.kmeans.train(x=scaled_f_s, init_centroids=init_centroids)
+        
   
-        reduced_f_s = kmeans.centroids
-        self.normalized_pos = reduced_f_s # 이때의 reduced_f_s 자체는 normalized된 상태
-        
+        reduced_f_s = self.kmeans.centroids
+        self.reduced_pos = reduced_f_s
         
         # 0610 승호수정 spherical
-        if self.spherical_On:
-            reduced_f_s = reduced_f_s * np.sqrt(d) # reduced_f_s 원래 스케일로 복원
-        else:
-            reduced_f_s = reduced_f_s * (f_s_max - f_s_min) + f_s_min # reduced_f_s 원래 스케일로 복원
+        # if self.spherical_On:
+        #     recovered_f_s = reduced_f_s * np.sqrt(d) # reduced_f_s 원래 스케일로 복원
+        # else:
+        #     recovered_f_s = reduced_f_s * (f_s_max - f_s_min) + f_s_min # reduced_f_s 원래 스케일로 복원
+        # self.pos = recovered_f_s
         
-        _, I = kmeans.index.search(f_s, 1) 
+        _, I = self.kmeans.index.search(f_s, 1) 
         labels = I[:, 0] # I: f_s의 각 요소(노드)에 대해 가장 가까운 centroid의 인덱스
         weighted_values = self.calculate_weighted_values(labels, values)  
+        
+        self.pos = f_s[labels] # 각 노드의 위치를 centroid의 위치로 설정
+        
         
         print(f"Offline Dataset => Clustered Nodes  /   {len(f_s)} => {len(reduced_f_s)}")
         return reduced_f_s, weighted_values, labels
@@ -160,56 +194,49 @@ class KeyNode(object):
         for node, data in graph.nodes(data=True):
             nodes.append(node)
             pos.append(data['pos'])
-        self.nodes = jnp.array(nodes)
-        self.pos = jnp.array(pos)
+        self.nodes = np.array(nodes)
+        # self.pos = jnp.array(pos)
         
         return graph    
     
     def find_node_pos(self, input_obs):
-        node_dim = self.flags.keynode_dim # rep 은 모든 dim 사용
+        node_dim = self.node_dim # rep 은 모든 dim 사용
         
         # 0610 승호수정 spherical
-        if self.spherical_On:
-            input_pos = input_obs / jnp.sqrt(node_dim)
-        else:
-            input_pos = (input_obs - self.scale_min) / (self.scale_max - self.scale_min)       
+        # if self.spherical_On:
+        #     input_pos = input_obs / jnp.sqrt(node_dim)
+        # else:
+        #     input_pos = (input_obs - self.scale_min) / (self.scale_max - self.scale_min)       
              
-        if self.flags.specific_dim_On:
-            if 'ant' in self.env_name:
-                input_pos = input_obs[:2] 
-                node_dim = 2
-            elif 'kitchen' in self.env_name:
-                input_pos = input_obs[:9] 
-                node_dim = 9
-            elif 'calvin' in self.env_name:
-                input_pos = input_obs[:15] 
-                node_dim = 15
+        # if self.flags.specific_dim_On:
+        #     if 'ant' in self.env_name:
+        #         input_pos = input_obs[:2] 
+        #         node_dim = 2
+        #     elif 'kitchen' in self.env_name:
+        #         input_pos = input_obs[:9] 
+        #         node_dim = 9
+        #     elif 'calvin' in self.env_name:
+        #         input_pos = input_obs[:15] 
+        #         node_dim = 15
 
         # 0610 승호수정 spherical
-        if self.spherical_On:
-            cosine_similarity = jnp.dot(self.normalized_pos, input_pos.T)
-            if self.flags.mapping_method in ["nearest"]:
-                index = jnp.argmax(cosine_similarity)
-                distance=cosine_similarity
-            else:
-                raise ValueError(f"Unsupported mapping_method: {self.flags.mapping_method}")
-        else:
-            distance = jnp.linalg.norm(self.normalized_pos - input_pos, axis=1)
-            if self.flags.mapping_method in ["nearest", "center"]:
-                index = jnp.argmin(distance)
-            elif self.flags.mapping_method in ["triple"]:
-                index = jnp.argsort(distance)
-                first, second = index[:2]
+        # if self.spherical_On:
+        #     cosine_similarity = jnp.dot(self.reduced_f_s, input_pos.T)
+        #     index = jnp.argmax(cosine_similarity)
+        #     distance=cosine_similarity
+        # else:
+        distance = jnp.linalg.norm(self.pos - input_obs[:self.node_dim], axis=1)
+        index = jnp.argmin(distance)
         
-        if self.flags.mapping_method == "nearest":
-            cur_obs_key_node = self.pos[index]
-        elif self.flags.mapping_method == "center":
-            cur_obs_key_node = (self.pos[index] + input_obs) / 2
-        elif self.flags.mapping_method == "triple":
-            cur_obs_key_node = (self.pos[first] + self.pos[second] + input_obs) / 3
+        # if self.flags.mapping_method == "nearest":
+        cur_obs_key_node = self.pos[index]
+        # elif self.flags.mapping_method == "center":
+        #     cur_obs_key_node = (self.pos[index] + input_obs) / 2
+        # elif self.flags.mapping_method == "triple":
+        #     cur_obs_key_node = (self.pos[first] + self.pos[second] + input_obs) / 3
             
-        if (self.flags.use_rep not in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]) and (self.flags.specific_dim_On):
-            cur_obs_key_node = jnp.concatenate([cur_obs_key_node, input_obs[node_dim:]])
+        # if (self.flags.use_rep not in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]) and (self.flags.specific_dim_On):
+        cur_obs_key_node = jnp.concatenate([cur_obs_key_node, input_obs[self.node_dim:]])
                             
         return distance[index], self.nodes[index], self.pos[index], cur_obs_key_node  # 현재 코드에서는 4번쨰 closest_node_observations만 사용
 
@@ -219,7 +246,28 @@ class KeyNode(object):
         else:
             closest_distances, closest_nodes, closest_node_positions, closest_node_observations = self.find_nodes(input_obs_batch)
         return closest_distances, closest_nodes, closest_node_positions, closest_node_observations # 현재 코드에서는 4번쨰 closest_node_observations만 사용
+  
+    def find_centroid(self, input_obs):
+        input_obs = np.array(input_obs).astype(np.float32)
         
+        if self.spherical_On:
+            input_pos = input_obs / np.sqrt(self.node_dim)
+        else:
+            input_pos = (input_obs - self.scale_min) / (self.scale_max - self.scale_min) 
+        
+        if self.spherical_On:
+            cosine_similarity = np.dot(self.reduced_f_s, input_pos[:,:self.node_dim].T)
+            index = np.argmax(cosine_similarity)
+            # distance = cosine_similarity
+
+        else:
+            distance = np.linalg.norm(self.pos - input_pos[:,:self.node_dim], axis=1)
+            index = np.argmin(distance)
+        
+        # _, I = self.kmeans.index.search(input_pos[:,:self.node_dim], 1) 
+        # index = I[0,0] # I: f_s의 각 요소(노드)에 대해 가장 가까운 centroid의 인덱스
+        return np.concatenate((self.pos[index], input_obs[0,self.node_dim:]))
+    
     def visualize_key_nodes(self, flags, node_colors="value_color", figsize=(27, 21), node_size=500, label_size=2, dpi=300 ):
         import time
         t = time.strftime('%m-%d_%H:%M')

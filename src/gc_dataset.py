@@ -21,6 +21,7 @@ class GCDataset:
     reward_shift: float = -1.0
     terminal: bool = True
     use_rep: str = ""
+    find_key_node : Callable = None
     
     @staticmethod
     def get_default_config():
@@ -37,7 +38,7 @@ class GCDataset:
     def __post_init__(self):
         self.terminal_locs, = np.nonzero(self.dataset[self.terminal_key] > 0)
         assert np.isclose(self.p_randomgoal + self.p_trajgoal + self.p_currgoal, 1.0)
-        if self.keynode_ratio:
+        if self.find_key_node is not None:
             if 'rep_observations' in self.dataset.keys():
                 _,_,_, self.key_node = self.find_key_node(self.dataset['rep_observations'])
             else:
@@ -103,7 +104,7 @@ class GCSDataset(GCDataset):
             'terminal': False,
         })
 
-    def sample(self, batch_size: int, indx=None):
+    def sample(self, batch_size: int, indx=None, hilp=False):
         if indx is None:
             indx = np.random.randint(self.dataset.size-1, size=batch_size)
         
@@ -121,52 +122,53 @@ class GCSDataset(GCDataset):
 
         batch['goals'] = jax.tree_map(lambda arr: arr[goal_indx], self.dataset['observations'])
 
-        # final state in each trajectory
-        final_state_indx = self.terminal_locs[np.searchsorted(self.terminal_locs, indx)]
-        # subgoal sampled from its own trajectory for low level training
-        way_indx = np.minimum(indx + self.way_steps, final_state_indx)
-        distance = np.random.rand(batch_size)
-        # subgoal sampled from its own trajectory with distance ratio for high level training
-        high_traj_goal_indx = np.round((np.minimum(indx + 1, final_state_indx) * distance + final_state_indx * (1 - distance))).astype(int)
-        # subgoal sampled from its own trajectory for high level training 
-        high_traj_target_indx = np.minimum(indx + self.way_steps, high_traj_goal_indx)
-        # randaom goal sampled from 
-        high_random_goal_indx = np.random.randint(self.dataset.size, size=batch_size)
-        high_random_target_indx = np.minimum(indx + self.way_steps, final_state_indx)
+        if hilp == False:
+            # final state in each trajectory
+            final_state_indx = self.terminal_locs[np.searchsorted(self.terminal_locs, indx)]
+            # subgoal sampled from its own trajectory for low level training
+            way_indx = np.minimum(indx + self.way_steps, final_state_indx)
+            distance = np.random.rand(batch_size)
+            # subgoal sampled from its own trajectory with distance ratio for high level training
+            high_traj_goal_indx = np.round((np.minimum(indx + 1, final_state_indx) * distance + final_state_indx * (1 - distance))).astype(int)
+            # subgoal sampled from its own trajectory for high level training 
+            high_traj_target_indx = np.minimum(indx + self.way_steps, high_traj_goal_indx)
+            # randaom goal sampled from 
+            high_random_goal_indx = np.random.randint(self.dataset.size, size=batch_size)
+            high_random_target_indx = np.minimum(indx + self.way_steps, final_state_indx)
 
-        pick_random = (np.random.rand(batch_size) < self.high_p_randomgoal)
-        high_goal_idx = np.where(pick_random, high_random_goal_indx, high_traj_goal_indx)
-        high_target_idx = np.where(pick_random, high_random_target_indx, high_traj_target_indx)
-        
-        batch['high_goals'] = jax.tree_map(lambda arr: arr[high_goal_idx], self.dataset['observations'])
-        
-        if self.key_node is None:
+            pick_random = (np.random.rand(batch_size) < self.high_p_randomgoal)
+            high_goal_idx = np.where(pick_random, high_random_goal_indx, high_traj_goal_indx)
+            high_target_idx = np.where(pick_random, high_random_target_indx, high_traj_target_indx)
+            
+            batch['high_goals'] = jax.tree_map(lambda arr: arr[high_goal_idx], self.dataset['observations'])
+            
             batch['low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['observations'])
             batch['high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['observations'])
-        else:
-            key_node = self.key_node[indx]
-            batch['key_node'] = key_node
+            
+            if self.key_node is not None:
+                key_node = self.key_node[indx]
+                batch['key_node'] = key_node
 
-            if self.keynode_ratio:
-                index =  int(self.keynode_ratio* batch_size)
-                way_index_key_node = way_indx[:index]
-                way_index_obs = way_indx[index:]
-                low_goals_key_node = jax.tree_map(lambda arr: arr[way_index_key_node], self.key_node)
-                low_goals_obs = jax.tree_map(lambda arr: arr[way_index_obs], self.dataset['observations'])
-                batch['low_goals'] = jnp.concatenate([low_goals_key_node, low_goals_obs])
-                
-            else:
-                batch['low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['observations'])
-                
-            if self.keynode_ratio:
-                index = int(self.keynode_ratio* batch_size)
-                high_target_index_key_node = high_target_idx[:index]
-                high_target_index_obs = high_target_idx[index:]
-                high_targets_key_node = jax.tree_map(lambda arr: arr[high_target_index_key_node], self.key_node)
-                high_targets_obs = jax.tree_map(lambda arr: arr[high_target_index_obs], self.dataset['observations'])
-                batch['high_targets'] = jnp.concatenate([high_targets_key_node, high_targets_obs])
-            else:
-                batch['high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['observations'])
+                # if self.keynode_ratio:
+                #     index =  int(self.keynode_ratio* batch_size)
+                #     way_index_key_node = way_indx[:index]
+                #     # way_index_obs = way_indx[index:]
+                #     low_goals_key_node = jax.tree_map(lambda arr: arr[way_index_key_node], self.key_node)
+                #     low_goals_obs = jax.tree_map(lambda arr: arr[way_index_obs], self.dataset['observations'])
+                #     batch['low_goals'] = jnp.concatenate([low_goals_key_node, low_goals_obs])
+                    
+                # else:
+                #     batch['low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['observations'])
+                    
+                # if self.keynode_ratio:
+                #     index = int(self.keynode_ratio* batch_size)
+                #     high_target_index_key_node = high_target_idx[:index]
+                #     high_target_index_obs = high_target_idx[index:]
+                #     high_targets_key_node = jax.tree_map(lambda arr: arr[high_target_index_key_node], self.key_node)
+                #     high_targets_obs = jax.tree_map(lambda arr: arr[high_target_index_obs], self.dataset['observations'])
+                #     batch['high_targets'] = jnp.concatenate([high_targets_key_node, high_targets_obs])
+                # else:
+                #     batch['high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['observations'])
 
         if isinstance(batch['goals'], FrozenDict):
             # Freeze the other observations

@@ -49,9 +49,9 @@ def kitchen_render(kitchen_env, wh=64):
     return img
 
 def evaluate_with_trajectories(
-        policy_fn, high_policy_fn, encoder_fn, decoder_fn, value_goal_fn, env: gym.Env, env_name, num_episodes: int, base_observation=None, num_video_episodes=0,
+        policy_fn, high_policy_fn, env: gym.Env, env_name, num_episodes: int, base_observation=None, num_video_episodes=0,
         eval_temperature=0, epsilon=0, 
-        config=None, find_key_node = None, FLAGS = None
+        config=None, find_key_node = None, FLAGS = None, distance_fn=None, nodes=None
 ) -> Dict[str, float]:
     trajectories = []
     stats = defaultdict(list)
@@ -89,55 +89,27 @@ def evaluate_with_trajectories(
         dists = []
         diff_sub_goal_nodes = []
         step = 0
-        h_step = interval
+        h_step = 1
+        interval = interval if FLAGS.relative_dist_in_eval_On else 1
         dist = 0
         init_dist = 1e5 if FLAGS.relative_dist_in_eval_On else 0
         
         cos_distances = []
         
-        if FLAGS.use_rep == "vae_encoder":
-            obs_goal,_ ,_ = encoder_fn(observation=obs_goal)
-        elif FLAGS.use_rep in ["hilp_subgoal_encoder", "hilp_encoder"]:
-            obs_goal =  encoder_fn(observations=jnp.expand_dims(obs_goal, axis=0))[0]
             
         while not done:
-            if FLAGS.use_rep == "vae_encoder" :
-                observation,_ ,_ = encoder_fn(observation=observation)
-            elif FLAGS.use_rep == "hilp_encoder" :
-                observation =  encoder_fn(observations=jnp.expand_dims(observation, axis=0))[0]
-                
+               
             if h_step == interval or dist < init_dist * 0.5:
                 cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=eval_temperature)
-                if FLAGS.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
-                    if FLAGS.rep_normalizing_On:
-                       cur_obs_subgoal = cur_obs_subgoal / np.linalg.norm(cur_obs_subgoal, axis=-1, keepdims=True) * np.sqrt(cur_obs_subgoal.shape[-1])
-                    else:
-                        cur_obs_subgoal = observation + cur_obs_subgoal
-                elif FLAGS.use_rep in ["hilp_encoder", "hilp_subgoal_encoder"]: 
-                    cur_obs_subgoal = cur_obs_subgoal
-                else:
-                    cur_obs_subgoal = observation + cur_obs_subgoal
+                cur_obs_subgoal = observation + cur_obs_subgoal
                     
                 if FLAGS.relative_dist_in_eval_On:
-                    if FLAGS.use_rep =="hilp_encoder":
-                        cur_obs_delta = observation
-                    elif FLAGS.use_rep =="hilp_subgoal_encoder":
-                        cur_obs_delta =  encoder_fn(observations=jnp.expand_dims(observation, axis=0))[0] # relative_dist_in_eval_On 구하기 위해 수행
-                    else:   
-                        cur_obs_delta = value_goal_fn(bases=observation, targets=obs_goal)
-                    init_dist = np.linalg.norm(cur_obs_subgoal - cur_obs_delta)
+                    init_dist = np.linalg.norm(cur_obs_subgoal - observation)
                     
                 cur_obs_goal = cur_obs_sub_goal = cur_obs_subgoal 
                 h_step = 0
             
-            if FLAGS.use_rep =="hilp_encoder":
-                    cur_obs_delta = observation
-            elif FLAGS.use_rep =="hilp_subgoal_encoder":
-                    cur_obs_delta =  encoder_fn(observations=jnp.expand_dims(observation, axis=0))[0] # relative_dist_in_eval_On 구하기 위해 수행
-            elif FLAGS.use_rep in ["hiql_goal_encoder","vae_encoder"]:          
-                cur_obs_delta = value_goal_fn(bases=observation, targets=obs_goal)
-                dist = np.linalg.norm(cur_obs_goal - cur_obs_delta) # "cur_obs_goal - cur_obs_delta" => "이전에 생성한 subgoal 위치(변화량) - 현재 obs 위치(변화량)"
-            else:
+
                 dist = np.linalg.norm(cur_obs_goal[node_dim] - observation[node_dim])
                                        
             h_step +=1
@@ -145,12 +117,14 @@ def evaluate_with_trajectories(
             dists.append(dist)
         
             if config['use_keynode_in_eval_On']:
-                cos_distance, _, _, cur_obs_key_node = find_key_node(cur_obs_sub_goal)
-                if cos_distance >= FLAGS.mapping_threshold:
-                    diff_sub_goal_node = np.linalg.norm(cur_obs_key_node - cur_obs_sub_goal, axis=-1, keepdims=True)
-                    diff_sub_goal_nodes.append(diff_sub_goal_node)
-                    cur_obs_goal = cur_obs_key_node  
-                cos_distances.append(cos_distance)
+                cur_obs_key_node = find_key_node(cur_obs_sub_goal.reshape(1,-1))
+                # cur_obs_key_node = nodes.find_centroid(cur_obs_sub_goal.reshape(1,-1))
+                # cos_distance, _, _, cur_obs_key_node = nodes.find_centroid(cur_obs_sub_goal.reshape(1,-1))
+                # if cos_distance >= FLAGS.mapping_threshold:
+                #     diff_sub_goal_node = np.linalg.norm(cur_obs_key_node - cur_obs_sub_goal, axis=-1, keepdims=True)
+                #     diff_sub_goal_nodes.append(diff_sub_goal_node)
+                cur_obs_goal = cur_obs_key_node  
+                # cos_distances.append(cos_distance)
     
             cur_obs_goal_rep = cur_obs_goal                
             action = policy_fn(observations=observation, goals=cur_obs_goal_rep, low_dim_goals=True, temperature=eval_temperature)
@@ -185,8 +159,7 @@ def evaluate_with_trajectories(
             
             # Render
             if i >= num_episodes and step % 3 == 0:
-                if FLAGS.use_rep in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"] and FLAGS.relative_dist_in_eval_On:
-                    rep_trajectory.append(cur_obs_delta)
+
                 if 'antmaze' in env_name:
                     size = 500
                     box_size = 0.015
@@ -200,11 +173,18 @@ def evaluate_with_trajectories(
                                 pixx = (x / 52) * (0.955 - 0.05) + 0.05
                                 pixy = (y / 36) * (0.19 - 0.81) + 0.81
                             return pixx, pixy
-      
-                        #x_sub_goal, y_sub_goal = cur_obs_sub_goal[:2]
-                        #sub_pixx, sub_pixy = xy_to_pixxy(x_sub_goal, y_sub_goal)
-                        #cur_frame[:3, int((sub_pixy - box_size) * size):int((sub_pixy + box_size) * size), int((sub_pixx - box_size) * size):int((sub_pixx + box_size) * size)] = 160
+
+                        # subgoal : gray
+                        x_sub_goal, y_sub_goal = cur_obs_sub_goal[:2]
+                        sub_pixx, sub_pixy = xy_to_pixxy(x_sub_goal, y_sub_goal)
+                        cur_frame[:3, int((sub_pixy - box_size) * size):int((sub_pixy + box_size) * size), int((sub_pixx - box_size) * size):int((sub_pixx + box_size) * size)] = 160
+                        # key node : pink
+                        x_node, y_node = cur_obs_key_node[:2]
+                        node_pixx, node_pixy = xy_to_pixxy(x_node, y_node)
+                        cur_frame[0, int((node_pixy - box_size) * size):int((node_pixy + box_size) * size), int((node_pixx - box_size) * size):int((node_pixx + box_size) * size)] = 255
+                        cur_frame[2, int((node_pixy - box_size) * size):int((node_pixy + box_size) * size), int((node_pixx - box_size) * size):int((node_pixx + box_size) * size)] = 127
                     render.append(cur_frame)
+                    
                 elif 'kitchen' in env_name:
                     render.append(kitchen_render(env, wh=200).transpose(2, 0, 1))
                 elif 'calvin' in env_name:
@@ -216,8 +196,7 @@ def evaluate_with_trajectories(
         trajectories.append(trajectory)
         if i >= num_episodes:
             renders.append(np.array(render))
-            if FLAGS.use_rep in ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"] and FLAGS.relative_dist_in_eval_On:
-                rep_trajectories.append(cur_obs_delta)
+
 
     for k, v in stats.items():
         stats[k] = np.mean(v)

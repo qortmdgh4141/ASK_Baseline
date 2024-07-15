@@ -100,18 +100,31 @@ def compute_high_actor_loss(agent, batch, network_params):
 
     dist = agent.network(observations, cur_goals, state_rep_grad=True, goal_rep_grad=True, method='high_actor', params=network_params)
 
-
-    if agent.config['use_rep'] in ["hiql_goal_encoder", "vae_encoder"]:
-        target = agent.network(targets=high_targets, bases=observations, method='value_goal_encoder')
-    elif agent.config['use_rep'] == "hilp_encoder":
-        target = high_targets 
-    elif agent.config['use_rep'] == "hilp_subgoal_encoder":
-        target = agent.network(observations=high_targets, method='hilp_phi')
-    else:
-        target = high_targets - observations
+    target = high_targets - observations
     
     log_probs = dist.log_prob(target)
-    actor_loss = -(exp_a * log_probs).mean()
+    actor_loss_ = -(exp_a * log_probs).mean()
+    
+    
+    kl_loss = 0
+    if agent.config['kl_loss']:
+        key_node_target = batch['key_node'] - observations
+        key_node_log_probs = dist.log_prob(key_node_target)
+        policy_log_probs = dist.mode()
+            
+        kl_loss = - (jnp.exp(key_node_log_probs) * (-key_node_log_probs - policy_log_probs)).mean()
+
+        log_std_q = dist.log_std()
+        log_std_p = key_node_target
+        
+        std_q = jnp.exp(log_std_q)
+        std_p = jnp.exp(log_std_p)
+
+        kl_div = log_std_p - log_std_q + (std_q ** 2 + (means_q - means_p) ** 2) / (2.0 * std_p ** 2) - 0.5
+
+        
+        
+    actor_loss = actor_loss_ + kl_loss
         
     return actor_loss, {
         'high_actor_loss': actor_loss,
@@ -120,11 +133,13 @@ def compute_high_actor_loss(agent, batch, network_params):
         'high_adv_median': jnp.median(adv),
         'high_mse': jnp.mean((dist.mode() - target)**2),
         'high_scale': dist.scale_diag.mean(),
+        'kl_loss' : kl_loss,
     }
 
 def compute_value_loss(agent, batch, network_params):
-    batch['masks'] = 1.0 - batch['rewards']
-    batch['rewards'] = batch['rewards'] - 1.0
+    masks = 1.0 - batch['rewards']
+    rewards = batch['rewards'] - 1.0
+    
     if agent.config['use_rep'] == "vae_encoder":
         observations, _, _ = agent.network(batch['observations'], method='vae_state_encoder', params=network_params)
         next_observations, _, _ = agent.network(batch['next_observations'], method='vae_state_encoder', params=network_params)
@@ -151,14 +166,14 @@ def compute_value_loss(agent, batch, network_params):
     
     (next_v1, next_v2) = agent.network(next_observations, cur_goals, method='target_value')
     next_v = jnp.minimum(next_v1, next_v2)
-    q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_v
+    q = rewards + agent.config['discount'] * masks * next_v
 
     (v1_t, v2_t) = agent.network(observations, cur_goals, method='target_value')
     v_t = (v1_t + v2_t) / 2
     adv = q - v_t
 
-    q1 = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_v1
-    q2 = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_v2
+    q1 = rewards + agent.config['discount'] * masks * next_v1
+    q2 = rewards + agent.config['discount'] * masks * next_v2
     (v1, v2) = agent.network(observations, cur_goals, method='value', params=network_params)
 
     value_loss1 = expectile_loss(adv, q1 - v1, agent.config['pretrain_expectile']).mean()
@@ -179,6 +194,9 @@ def compute_value_loss(agent, batch, network_params):
     }
 
 def hilp_compute_value_loss(agent, batch, network_params):
+    masks = 1.0 - batch['rewards']
+    rewards = batch['rewards'] - 1.0
+    
     (next_v1, next_v2) = agent.network(batch['next_observations'], batch['goals'], method='hilp_target_value')
     next_v = jnp.minimum(next_v1, next_v2)
     q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_v
@@ -187,8 +205,8 @@ def hilp_compute_value_loss(agent, batch, network_params):
     v_t = (v1_t + v2_t) / 2
     adv = q - v_t
 
-    q1 = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_v1
-    q2 = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_v2
+    q1 = rewards + agent.config['discount'] * masks * next_v1
+    q2 = rewards + agent.config['discount'] * masks * next_v2
     (v1, v2) = agent.network(batch['observations'], batch['goals'], method='hilp_value', params=network_params)
     v = (v1 + v2) / 2
 
@@ -236,11 +254,16 @@ class JointTrainAgent(iql.IQLAgent):
     network: TrainState = None
     key_nodes : dict = None
     
-    def pretrain_update(agent, pretrain_batch, seed=None, value_update=True, actor_update=True, high_actor_update=True):
+    def pretrain_update(agent, pretrain_batch, seed=None, value_update=True, actor_update=True, high_actor_update=True, hilp_update=True):
         def loss_fn(network_params):
             info = {}
             a = 0
             b=0
+            # if hilp_update:
+            #     value_update, actor_update, high_actor_update = False, False, False
+            # else:
+            #     value_update, actor_update, high_actor_update = True, True, True
+                
             # Value
             if value_update:
                 value_loss, value_info = compute_value_loss(agent, pretrain_batch, network_params)
@@ -266,7 +289,8 @@ class JointTrainAgent(iql.IQLAgent):
                 high_actor_loss = 0.
             
             # HILP Representation
-            if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
+            if hilp_update:
+            # if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
                 hilp_value_loss, hilp_value_info = hilp_compute_value_loss(agent, pretrain_batch, network_params)
                 for k, v in hilp_value_info.items():
                     info[f'hilp_value/{k}'] = v
@@ -298,7 +322,8 @@ class JointTrainAgent(iql.IQLAgent):
             new_network = new_network.replace(params=freeze(params))
  
         # HILP update
-        if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
+        # if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
+        if hilp_update:
             hilp_new_target_params = jax.tree_map(
             lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_hilp_value'], agent.network.params['networks_hilp_target_value']
             )
@@ -316,7 +341,7 @@ class JointTrainAgent(iql.IQLAgent):
             new_network = new_network.replace(params=freeze(params))
             
         return agent.replace(network=new_network), info
-    pretrain_update = jax.jit(pretrain_update, static_argnames=('value_update', 'actor_update', 'high_actor_update', 'use_rep'))
+    pretrain_update = jax.jit(pretrain_update, static_argnames=('value_update', 'actor_update', 'high_actor_update', 'hilp_update'))
 
     def sample_actions(agent,
                        observations: np.ndarray,
@@ -364,6 +389,13 @@ class JointTrainAgent(iql.IQLAgent):
                             *,
                             observations: jnp.ndarray) -> jnp.ndarray:
         return agent.network(observations=observations, method='hilp_phi')
+
+    @jax.jit
+    def get_hilp_value(agent,
+                            *,
+                            observations: jnp.ndarray,
+                            goals: jnp.ndarray) -> jnp.ndarray:
+        return agent.network(observations=observations, goals=goals, method='hilp_value')
     
     @jax.jit
     def get_value_goal(agent,
@@ -431,24 +463,28 @@ def create_learner(
             else:
                 return RelativeRepresentation(rep_dim=value_hidden_dims[-1], hidden_dims=(*value_hidden_dims, value_hidden_dims[-1]), layer_norm=use_layer_norm, bottleneck=False, rep_type=flag.rep_type)
         
-        if flag.use_rep == 'hiql_goal_encoder':
-            value_goal_encoder = make_encoder(bottleneck=True)
+        # if flag.use_rep == 'hiql_goal_encoder':
+        #     value_goal_encoder = make_encoder(bottleneck=True)
         
-        elif flag.use_rep in ['hilp_subgoal_encoder', 'hilp_encoder']: 
-            hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=(512, 512, 512), use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=False)
+        # elif flag.use_rep in ['hilp_subgoal_encoder', 'hilp_encoder']: 
+        #     hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=(512, 512, 512), use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=False)
             
-        elif flag.use_rep == "vae_encoder":
-            value_goal_encoder = make_encoder(bottleneck=True)
-            vae_state_encoder = Vae_Encoder(rep_dim=rep_dim, hidden_dim=state_hidden_dims, layer_norm=use_layer_norm)
-            vae_state_decoder = Vae_Decoder(hidden_dim=state_hidden_dims[::-1], layer_norm=use_layer_norm, output_shape=observations.shape[-1])
+        # elif flag.use_rep == "vae_encoder":
+        #     value_goal_encoder = make_encoder(bottleneck=True)
+        #     vae_state_encoder = Vae_Encoder(rep_dim=rep_dim, hidden_dim=state_hidden_dims, layer_norm=use_layer_norm)
+        #     vae_state_decoder = Vae_Decoder(hidden_dim=state_hidden_dims[::-1], layer_norm=use_layer_norm, output_shape=observations.shape[-1])
         
         if flag.use_rep in ["hilp_subgoal_encoder", "hilp_encoder"]:
             high_action_dim = flag.hilp_skill_dim
         elif flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
             high_action_dim = rep_dim
         else:
-            observations.shape[-1]
-            
+            high_action_dim = observations.shape[-1]
+        
+        hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=False)
+        # hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=(512, 512, 512), use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=False)
+        
+        
         high_actor_def = Policy(actor_hidden_dims, action_dim=high_action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
 
         network_def = HierarchicalActorCritic(
@@ -485,7 +521,7 @@ def create_learner(
         config = flax.core.FrozenDict(dict(
             discount=discount, temperature=temperature, high_temperature=high_temperature,
             target_update_rate=tau, pretrain_expectile=pretrain_expectile, way_steps=way_steps, keynode_ratio=flag.keynode_ratio, 
-            env_name=kwargs['env_name'], use_rep=flag.use_rep, vae_recon_coe=flag.vae_recon_coe, vae_kl_coe=flag.vae_kl_coe,
+            env_name=kwargs['env_name'], use_rep=flag.use_rep, vae_recon_coe=flag.vae_recon_coe, vae_kl_coe=flag.vae_kl_coe, kl_loss=flag.kl_loss
         ))
 
         return JointTrainAgent(rng, network=network, critic=None, value=None, target_value=None, actor=None, config=config, key_nodes=key_nodes)

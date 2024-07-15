@@ -266,4 +266,14 @@ class HierarchicalActorCritic(nn.Module):
                 'actor': self.actor(observations, goals),
                 'high_actor': self.high_actor(observations, goals),
             }
+        else:
+            rets = {
+                'hilp_value': self.hilp_value(observations, goals), 
+                'hilp_target_value': self.hilp_target_value(observations, goals),
+                'value': self.value(observations, goals),
+                'target_value': self.target_value(observations, goals),
+                'actor': self.actor(observations, goals),
+                'high_actor': self.high_actor(observations, goals),
+            }
+            
         return rets

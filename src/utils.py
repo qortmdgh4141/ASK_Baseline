@@ -136,6 +136,178 @@ def record_video(label, step, renders=None, n_cols=None, skip_frames=1):
     renders = np.array(renders)
     return save_video(label, step, renders, n_cols=n_cols)
 
+def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain_batch, obs, transition_index=None, trajs=None):
+    if trajs is not None:
+        subgoals = []
+        for j, t in enumerate(trajs):
+            subgoals.extend(t['cur_obs_subgoal'])
+        subgoals = np.array(subgoals).reshape(-1,29)
+    
+    
+    import matplotlib.pyplot as plt
+    joint = np.tile(base_observation[2:], (59,46,1))
+    goal_infos = np.tile(goal_info, (59,46,1))
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    from matplotlib.gridspec import GridSpec
+    gs = GridSpec(2, 3, width_ratios=[1, 1, 0.05], wspace=0.8)
+    cmap = plt.cm.bwr
+    
+    x = np.arange(59)
+    y = np.arange(46)
+    xx, yy = np.meshgrid(y, x)
+    coordinates = np.dstack((yy,xx))
+    observations = np.concatenate((coordinates, joint), axis=2)
+    value = agent.network(observations, goal_infos, method='value')[0].transpose(1,0)
+    
+    # value map
+    sc1 = axes[0,0].imshow(value, cmap='Blues_r', interpolation='nearest')
+    axes[0,0].set_title('all map value')
+    axes[0,0].invert_yaxis() 
+    
+    # real obs value map
+    real_obs_value = agent.network(pretrain_batch['observations'], np.tile(goal_info, (1024,1)), method='value')[0]
+    x, y = pretrain_batch['observations'][:,0], pretrain_batch['observations'][:,1]
+    sc2 = axes[0,1].scatter(x, y, c=real_obs_value, cmap=cmap, vmin=-101, vmax=0)
+    axes[0,1].set_title('real obs value')
+    
+    cbar_ax_value = fig.add_subplot(gs[0,2])
+    cbar = plt.colorbar(sc2,  cax=cbar_ax_value, label='value')
+    # sub goals value map
+    
+    if trajs is not None and subgoals.shape[0]>1024:
+        index = np.random.choice(subgoals.shape[0], size=1024)
+        subgoals = subgoals[index]
+        
+        subgoals_value = agent.network(subgoals, np.tile(goal_info, (subgoals.shape[0],1)), method='value')[0]
+        x, y = subgoals[:,0], subgoals[:,1]
+        sc3 = axes[1,0].scatter(x, y, c=subgoals_value, cmap=cmap, vmin=-101, vmax=0)
+        axes[1,0].set_title('subgoals value')
+        
+        # sub goals identity map
+        subgoals_identity = agent.network(subgoals, method='identify')
+        sc4 = axes[1,1].scatter(x, y, c=subgoals_identity, cmap=cmap, vmin=0, vmax=1)
+        axes[1,1].set_title('subgoals identity')
+    
+    if 'networks_hilp_value' in agent.network.params.keys():
+        # index = np.random.choice(obs.shape[0], size=1024)
+        transition_index = transition_index if transition_index is not None else np.random.choice(obs.shape[0], size=1024)
+        obs_sub = obs[transition_index]
+        hilp_value = agent.network(obs_sub, np.tile(goal_info, (obs_sub.shape[0],1)), method='hilp_value')[0]
+        obs_value = agent.network(obs_sub, np.tile(goal_info, (obs_sub.shape[0],1)), method='value')[0]
+        x, y = obs_sub[:,0], obs_sub[:,1]
+        sc3 = axes[1,0].scatter(x, y, c=obs_value, cmap=cmap, vmin=-101, vmax=0, s=0.01)
+        axes[1,0].set_title('obs_value value')
+        
+        # sub goals identity map
+        sc4 = axes[1,1].scatter(x, y, c=hilp_value, cmap=cmap, vmin=-251, vmax=0, s=0.01)
+        axes[1,1].set_title('obs_hilp_value identity')
+    
+    
+    cbar_ax_identity = fig.add_subplot(gs[1,2])
+    cbar = plt.colorbar(sc4,  cax=cbar_ax_identity, label='probs')
+    # plt.gca().invert_yaxis()
+    
+    import os
+    os.makedirs(f'/home/spectrum/study/ASK_legacy/ASK_Baseline/value_img/{g_start_time}', exist_ok=True)
+    plt.savefig(f'/home/spectrum/study/ASK_legacy/ASK_Baseline/value_img/{g_start_time}/value_img_{i}.png', format="PNG", dpi=300)
+    
+    
+    import io
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+
+    # Read the buffer into a PIL image and convert to NumPy array
+    from PIL import Image
+    value_map = Image.open(buf)
+    value_map = np.array(value_map)
+    
+    
+    
+    fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+    # from matplotlib.gridspec import GridSpec
+    gs = GridSpec(1, 3, width_ratios=[1, 1, 0.05], wspace=0.8)
+    cmap = plt.cm.bwr
+    
+    random_index = np.random.choice(obs.shape[0], size=len(transition_index))
+    x, y = obs[random_index,0], obs[random_index,1]
+    sc1 = axes[0].scatter(x, y, s=0.01)
+    
+    x_, y_ = obs[transition_index, 0], obs[transition_index, 1]
+    sc2 = axes[1].scatter(x_, y_, s=0.01)
+    
+    axes[0].set_title('all map value')
+    # cbar_ax_identity = fig.add_subplot(gs[0,2])
+    # cbar = plt.colorbar(sc2,  cax=cbar_ax_identity, label='probs')
+    # plt.gca().invert_yaxis()
+    
+    import os
+    os.makedirs(f'/home/spectrum/study/ASK_legacy/ASK_Baseline/value_img/{g_start_time}', exist_ok=True)
+    plt.savefig(f'/home/spectrum/study/ASK_legacy/ASK_Baseline/value_img/{g_start_time}/sampled_obs_img_{i}.png', format="PNG", dpi=300)
+    
+    
+    
+    
+    
+    identity_map = None
+    if 'networks_identify' in agent.network.params.keys():
+        import jax
+        # real obs
+        identity_map_real_obs = agent.network(pretrain_batch['observations'], method='identify')
+        
+        x, y = pretrain_batch['observations'][:,0], pretrain_batch['observations'][:,1]
+        
+        # pseudo obs
+        import time
+        pseudo_obs = jax.random.uniform(jax.random.PRNGKey(int(time.time())), (3096, base_observation.shape[-1]), minval=pretrain_batch['observations'].min(axis=0), maxval=pretrain_batch['observations'].max(axis=0))
+        
+        x_, y_ = pseudo_obs[:,0], pseudo_obs[:,1]
+        identity_map_pseudo_obs = agent.network(pseudo_obs, method='identify')
+
+
+        # pseudo obs with real joint
+        pseudo_obs_with_dataset_joint = jnp.concatenate([x_.reshape(-1,1), y_.reshape(-1,1), pretrain_batch['observations'][:,2:]], axis=1)
+        identity_map_with_real_joint = agent.network(pseudo_obs_with_dataset_joint, method='identify')
+        
+        # real obs with pseudo joint
+        real_obs_with_pseudo_joint = jnp.concatenate([x.reshape(-1,1), y.reshape(-1,1), pseudo_obs[:,2:]], axis=1)
+        identity_map_with_pseudo_joint = agent.network(real_obs_with_pseudo_joint, method='identify')
+        
+        
+        
+        from matplotlib.gridspec import GridSpec
+        fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+        gs = GridSpec(2, 3, width_ratios=[1, 1, 0.05], wspace=0.8)
+        cmap = plt.cm.bwr
+        
+        sc1 = axes[0,0].scatter(x, y, c=identity_map_real_obs, cmap=cmap, vmin=0, vmax=1)
+        axes[0,0].set_title('real obs')
+        
+        sc2 = axes[0,1].scatter(x_, y_, c=identity_map_pseudo_obs, cmap=cmap, vmin=0, vmax=1)
+        axes[0,1].set_title('pseudo obs 2')
+        
+
+        sc3 = axes[1,1].scatter(x, y, c=identity_map_with_pseudo_joint, cmap=cmap, vmin=0, vmax=1)
+        axes[1,1].set_title('real obs, pseudo joint 3')
+        
+        sc4 = axes[1,0].scatter(x_, y_, c=identity_map_with_real_joint, cmap=cmap, vmin=0, vmax=1)
+        axes[1,0].set_title('pseudo xy, real joint 4')
+        
+        cbar_ax = fig.add_subplot(gs[0,2])
+        cbar = plt.colorbar(sc4,  cax=cbar_ax, label='probs')
+        
+        # plt.gca().invert_yaxis()
+        
+        plt.savefig(f'/home/spectrum/study/ASK_Baseline/value_img/{g_start_time}/identity_img_{i}.png', format="PNG", dpi=300)
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+    
+        identity_map = Image.open(buf)
+        identity_map = np.array(identity_map)
+    
+    return value_map, identity_map
 
 class CsvLogger:
     def __init__(self, path):

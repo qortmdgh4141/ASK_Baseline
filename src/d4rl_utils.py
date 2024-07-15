@@ -22,7 +22,7 @@ def get_dataset(env: gym.Env,
                 obs_dtype=np.float32,
                 flag=None
                 ):
-        goal_info = None
+        # goal_info = None
         if dataset is None:
             dataset = d4rl.qlearning_dataset(env)
 
@@ -56,26 +56,30 @@ def get_dataset(env: gym.Env,
             dones_float[-1] = 1
             dataset['rewards'], goal_info = relabel_ant(env, env_name, dataset, flag) # flags.use_goal_info_On 일때만, goal_info 반환하고 나머지는 None
         elif 'calvin' in env_name:
-            dataset['rewards'] = relabel_calvin(env, env_name, dataset, flag)
+            goal_info, episode_index = relabel_calvin(env, env_name, dataset, flag)
             dones_float = dataset['terminals'].copy()
-        else:
+        elif 'kitchen' in env_name:
             dones_float = dataset['terminals'].copy()
+            goal_info, episode_index = relabel_kitchen(env, env_name, dataset, flag) 
 
+        else:
+            NotImplementedError
+            
         observations = dataset['observations'].astype(obs_dtype)
         next_observations = dataset['next_observations'].astype(obs_dtype)
 
-        if 'ant' in env_name:
-            if flag.kmean_weight_type == 'rtg_discount':
-                returns, episode_index = calc_return_to_go_ant(dataset)
-            elif flag.kmean_weight_type == 'rtg_uniform':
-                returns, episode_index = calc_return_to_go_ant_trajectory(dataset)
-            elif flag.kmean_weight_type == 'hilbert_td':      
-                returns, episode_index = None, None
+        # if 'ant' in env_name:
+        #     if flag.kmean_weight_type == 'rtg_discount':
+        #         returns, episode_index = calc_return_to_go_ant(dataset)
+        #     elif flag.kmean_weight_type == 'rtg_uniform':
+        #         returns, episode_index = calc_return_to_go_ant_trajectory(dataset)
+        #     elif flag.kmean_weight_type == 'hilbert_td':      
+        #         returns, episode_index = None, None
             
-        elif 'kitchen' in env_name:
-            returns, episode_index = calc_return_to_go_kitchen(dataset)
-        elif 'calvin' in env_name:
-            returns, episode_index = calc_return_to_go_calvin(dataset, flag)
+        # elif 'kitchen' in env_name:
+        #     returns, episode_index = calc_return_to_go_kitchen(dataset, flag)
+        # elif 'calvin' in env_name:
+        #     returns, episode_index = calc_return_to_go_calvin(dataset, flag)
         return Dataset.create(
             observations=observations,
             actions=dataset['actions'].astype(np.float32),
@@ -83,14 +87,15 @@ def get_dataset(env: gym.Env,
             masks=1.0 - dones_float.astype(np.float32),
             dones_float=dones_float.astype(np.float32),
             next_observations=next_observations,
-            returns = returns,
+            # returns = returns,
             goal_info = goal_info,
-            ), episode_index
+            )
+        # episode_index
             
 def relabel_ant(env, env_name, dataset, flags):
     observation_pos = dataset['observations'][:, :2]  
     new_rewards = np.zeros_like(dataset['rewards'])  
-    goal_info = None
+    # goal_info = None
     if flags.use_goal_info_On:
         d4rl_dataset = env.get_dataset()
         goal_pos = d4rl_dataset['infos/goal']  
@@ -105,6 +110,9 @@ def relabel_ant(env, env_name, dataset, flags):
             index = np.where(distance <= 0.5, 1, 0)
             if any(index) and np.linalg.norm(observation_pos[1000*(idx//1000)] - unique_goal_pos[index]) > 20: # 코드 잘못되었음 (추후 수정해야함)
                 new_rewards[idx] = 1.0
+        reshaped_obs = dataset['observations'].reshape(999,1000,-1)
+        goal_info = np.repeat(reshaped_obs[:,-1], repeats=1000, axis=0)
+        
     elif 'large' in env_name:
         unique_goal_pos = np.array([[0,0],[0,12], [0,24], [12,22], [12,8], [20,16], [36,0], [32.75,24.75], [32,16]])
         for idx, obs_pos in enumerate(observation_pos):
@@ -137,7 +145,29 @@ def relabel_calvin(env, env_name, dataset, flags):
             dataset['rewards'][i] +=1
         if start_led != led:
             dataset['rewards'][i] +=1
-    return dataset['rewards']
+    reshape_obs = dataset['observations'].reshape(1204,499,-1)[:,-1,:]
+    goal_info = np.repeat(reshape_obs[:,np.newaxis,:], 499, axis=1).reshape(-1, 21)
+    return goal_info, dataset['episodes']
+
+def relabel_kitchen(env, env_name, dataset, flags):
+    episode_index = []
+    tmp_episode = []
+    episodes = []
+    tmp_episode_cnt = 0
+
+    for i, t in enumerate(dataset['terminals']):
+        tmp_episode_cnt+=1
+        tmp_episode.append(i)            
+        if t:
+            episodes.extend(np.tile(dataset['observations'][i][:30], (tmp_episode_cnt,1)))
+            episode_index.append(tmp_episode)
+            tmp_episode = []   
+            tmp_episode_cnt = 0          
+            
+    goal_info = np.stack(episodes)
+
+    return goal_info, episode_index
+
 
 def calc_return_to_go_ant_trajectory(dataset):
     rewards = dataset['rewards'].reshape(999, -1)   
@@ -180,7 +210,8 @@ def calc_return_to_go_kitchen(dataset, flags):
                     expert_episode_index.append(np.array(tmp_episode))
                 episode_index.append(np.array(tmp_episode))
                 tmp_episode = []
-        return np.array(expert_episode_index) if flags.expert_data_On else np.array(episode_index)
+        return expert_episode_index if flags.expert_data_On else episode_index
+    
     gamma=0.9
     rewards = dataset['rewards']
     terminals = dataset['terminals']
@@ -351,3 +382,74 @@ def hilp_add_data(dataset, rep_observations):
             returns = td_value,
             goal_info = dataset['goal_info'],
         )
+    
+def get_transition_index(agent, dataset, flags):
+    if 'ant' in flags.env_name:
+        return get_transition_index_ant(agent, dataset, flags)
+    elif 'kitchen' in flags.env_name:
+        return get_transition_index_kitchen(agent, dataset, flags)
+    else:
+        NotImplementedError
+
+def get_hilp_obs(agent, dataset, flags):
+    if 'ant' in flags.env_name:
+        return get_transition_index_ant(agent, dataset, flags)
+    elif 'kitchen' in flags.env_name:
+        return get_transition_index_kitchen(agent, dataset, flags)
+    else:
+        NotImplementedError
+
+def get_transition_index_ant(agent, dataset, flags):
+    import jax
+    mini_batch = 50000
+    size = len(dataset['observations']) // mini_batch
+    values = np.zeros(len(dataset['observations']), dtype=np.float32)
+    value_fn = jax.jit(agent.get_hilp_value)
+    for i in range(size+1):
+        values[mini_batch*i:mini_batch*(i+1)] = value_fn(observations=dataset['observations'][mini_batch*i:mini_batch*(i+1)], goals=dataset['goal_info'][mini_batch*i:mini_batch*(i+1)])[0]
+    
+            
+    rewards = dataset['rewards'].reshape(999,1000)
+    dones_index = np.argmax(rewards, axis=1)
+    dones_index[dones_index==0] = 999
+    
+    reshape_values = values.reshape(999, 1000)
+    tdd_ = reshape_values[:, 1:] - reshape_values[:, :-1]
+    tdd = jnp.pad(tdd_, ((0, 0), (1, 0)), constant_values=tdd_[tdd_>0].mean())
+    tdds = []
+    indexes = np.zeros_like(values, dtype=bool)
+ 
+    for i, t in enumerate(tdd):
+        tdds.extend(t[:dones_index[i]])
+        indexes[:dones_index[i]] = False
+    td_flatten = np.array(tdd, dtype=np.float32)
+    
+    transition_index = np.where(tdd > tdd[tdd>0].mean(), True, False)
+    transition_index = transition_index * indexes
+    tdd = tdd[transition_index]
+    print(f'before filtered tdds {tdd[0,0]=}, {tdd.min()=}, {tdd.max()=}, {transition_index.mean()=}, {td_flatten[transition_index].mean()=}')
+    print(f'after filtered tdds {td_flatten[0,0]=}, {td_flatten.min()=}, {td_flatten.max()=}, {transition_index.mean()*100=} % used dataset, {td_flatten[transition_index].mean()=}')
+    
+    return np.array(transition_index).astype(bool)
+
+def get_transition_index_kitchen(agent, dataset, flags):
+    import jax
+    mini_batch = 50000
+    size = len(dataset['observations']) // mini_batch
+    values = np.zeros(len(dataset['observations']), dtype=np.float32)
+    value_fn = jax.jit(agent.get_hilp_value)
+    
+    for i in range(size+1):
+        values[mini_batch*i:mini_batch*(i+1)] = value_fn(observations=dataset['observations'][mini_batch*i:mini_batch*(i+1)], goals=dataset['goal_info'][mini_batch*i:mini_batch*(i+1)])[0]
+
+    
+    
+    tdd_ = values[1:] - values[:-1]
+    index = dataset['dones_float']==1
+    mean_tdd = tdd_[tdd_>0].mean()
+    tdd_[index[:-1]] = mean_tdd
+    tdd = np.concatenate(([mean_tdd], tdd_))
+    transition_index = tdd > tdd.mean()
+    print(f'{tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {transition_index.mean()=},, {tdd[transition_index].mean()=}')
+    
+    return np.array(transition_index).astype(bool)
