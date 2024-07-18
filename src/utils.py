@@ -214,8 +214,14 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     # plt.gca().invert_yaxis()
     
     import os
-    os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}', exist_ok=True)
-    plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/value_img_{i}.png', format="PNG", dpi=300)
+    
+    dir_name = os.dirname(os.dirname(__file__))
+    save_path = os.path.join(dir_name, 'value_img', g_start_time)
+    os.makedirs(save_path, exist_ok=True)
+    plt.savefig(os.path.join(save_path, 'sampled_obs_img_{i}.png'), format="PNG", dpi=300)
+    
+    # os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}', exist_ok=True)
+    # plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/value_img_{i}.png', format="PNG", dpi=300)
     
     
     import io
@@ -248,10 +254,10 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     # plt.gca().invert_yaxis()
     
     import os
-    dir_name = os.dirname(os.dirname(__file__))
-    save_path = os.path.join(dir_name, 'value_img', g_start_time)
-    os.makedirs(save_path, exist_ok=True)
-    plt.savefig(os.path.join(save_path, 'sampled_obs_img_{i}.png'), format="PNG", dpi=300)
+    # os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}', exist_ok=True)
+    # plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/sampled_obs_img_{i}.png', format="PNG", dpi=300)
+    plt.savefig(os.path.join(save_path, 'identity_img_{i}.png'), format="PNG", dpi=300)
+
     
     
     
