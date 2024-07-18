@@ -190,10 +190,17 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     
     if 'networks_hilp_value' in agent.network.params.keys():
         # index = np.random.choice(obs.shape[0], size=1024)
-        transition_index = transition_index if transition_index is not None else np.random.choice(obs.shape[0], size=1024)
-        filtered_transition_index, hlip_filtered_index, dones_indexes = transition_index
-        random_obs_sub = obs[dones_indexes][np.random.choice(obs[dones_indexes].shape[0], size=filtered_transition_index.sum())]
-        hilp_filtered_obs_sub = obs[filtered_transition_index]
+        if transition_index is not None:
+            filtered_transition_index, hlip_filtered_index, dones_indexes = transition_index
+            random_obs_sub = obs[dones_indexes][np.random.choice(obs[dones_indexes].shape[0], size=filtered_transition_index.sum())]
+            hilp_filtered_obs_sub = obs[filtered_transition_index]
+            
+        
+        else:
+            filtered_transition_index = transition_index = np.random.choice(obs.shape[0], size=1024)
+            
+            random_obs_sub = hilp_filtered_obs_sub = obs[np.random.choice(obs.shape[0], size=1024)]
+        
         
         hilp_value = agent.network(hilp_filtered_obs_sub, np.tile(goal_info, (hilp_filtered_obs_sub.shape[0],1)), method='hilp_value')[0]
         obs_value = agent.network(random_obs_sub, np.tile(goal_info, (random_obs_sub.shape[0],1)), method='value')[0]
@@ -215,10 +222,10 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     
     import os
     
-    dir_name = os.dirname(os.dirname(__file__))
+    dir_name = os.path.dirname(os.path.dirname(__file__))
     save_path = os.path.join(dir_name, 'value_img', g_start_time)
     os.makedirs(save_path, exist_ok=True)
-    plt.savefig(os.path.join(save_path, 'sampled_obs_img_{i}.png'), format="PNG", dpi=300)
+    plt.savefig(os.path.join(save_path, f'sampled_obs_img_{i}.png'), format="PNG", dpi=300)
     
     # os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}', exist_ok=True)
     # plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/value_img_{i}.png', format="PNG", dpi=300)
@@ -253,10 +260,9 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     # cbar = plt.colorbar(sc2,  cax=cbar_ax_identity, label='probs')
     # plt.gca().invert_yaxis()
     
-    import os
     # os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}', exist_ok=True)
     # plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/sampled_obs_img_{i}.png', format="PNG", dpi=300)
-    plt.savefig(os.path.join(save_path, 'identity_img_{i}.png'), format="PNG", dpi=300)
+    plt.savefig(os.path.join(save_path, f'identity_img_{i}.png'), format="PNG", dpi=300)
 
     
     
