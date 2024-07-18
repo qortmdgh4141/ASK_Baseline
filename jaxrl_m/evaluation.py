@@ -168,7 +168,7 @@ def evaluate_with_trajectories(
             if i >= num_episodes and step % 3 == 0:
 
                 if 'antmaze' in env_name:
-                    size = 500
+                    size = 240
                     box_size = 0.015
                     cur_frame = env.render(mode='rgb_array', width=size, height=size).transpose(2, 0, 1).copy()
                     if ('large' in env_name or 'ultra' in env_name) and not FLAGS.high_action_in_hilp:
@@ -201,7 +201,7 @@ def evaluate_with_trajectories(
         if 'calvin' in env_name:
             info['return'] = sum(trajectory['reward'])
         add_to(stats, flatten(info, parent_key="final"))
-        trajectories.append(trajectory)
+        # trajectories.append(trajectory)
         if i >= num_episodes:
             renders.append(np.array(render))
 

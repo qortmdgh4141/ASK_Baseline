@@ -2,7 +2,7 @@ import os
 import sys
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false" 
-gpu_index = sys.argv[sys.argv.index('--gpu') + 1] if '--gpu' in sys.argv else "0" # Default to GPU 0 if no --gpu argument
+gpu_index = sys.argv[sys.argv.index('--gpu') + 1] if '--gpu' in sys.argv else "1" # Default to GPU 0 if no --gpu argument
 os.environ['CUDA_VISIBLE_DEVICES'] = gpu_index
 print("Using GPU: ", gpu_index)
 
@@ -95,9 +95,11 @@ flags.DEFINE_float('spherical_On', 0, '') # 0:Euclidean Distance // 1: Cosine Si
 flags.DEFINE_float('mapping_threshold', 0.0, '')
 flags.DEFINE_integer('kl_loss', 0, '')
 flags.DEFINE_integer('final_goal', 0, '')
-flags.DEFINE_integer('mse_loss', 0, '') # train high action to key node (mse loss)
+flags.DEFINE_float('mse_loss', 0, '') # train high action to key node (mse loss)
 flags.DEFINE_integer('high_action_in_hilp', 0, '') # high action - 0: raw obs 1: hilp space 
 flags.DEFINE_integer('low_actor_train_with_high_actor', 0, '') # low actor train with high action - 0: offline obs low goals 1: trained high level policy action 
+flags.DEFINE_integer('correction_value', 0, '') # value ratio correction
+flags.DEFINE_integer('n_step_hilp', 0, '') # value ratio correction
 
 wandb_config = default_wandb_config()
 wandb_config.update({
@@ -220,6 +222,8 @@ def main(_):
     FLAGS.config['mse_loss'] = FLAGS.mse_loss
     FLAGS.config['high_action_in_hilp'] = FLAGS.high_action_in_hilp
     FLAGS.config['low_actor_train_with_high_actor'] = FLAGS.low_actor_train_with_high_actor
+    FLAGS.config['correction_value'] = FLAGS.correction_value
+    FLAGS.config['n_step_hilp'] = FLAGS.n_step_hilp
 
 
     # Create wandb logger
@@ -526,8 +530,8 @@ def main(_):
             train_metrics['time/epoch_time'] = (time.time() - last_time) / FLAGS.log_interval
             train_metrics['time/total_time'] = (time.time() - first_time)
             last_time = time.time()
-            wandb.log(train_metrics, step=i)
-            train_logger.log(train_metrics, step=i)
+            wandb.log(train_metrics, step=hilp_train_steps+i)
+            train_logger.log(train_metrics, step=hilp_train_steps+i)
 
 
         if i == 1 or i % FLAGS.eval_interval == 0:
@@ -566,18 +570,18 @@ def main(_):
             #     [partial(viz_utils.visualize_metric, metric_name=k) for k in traj_metrics.keys()]
             # )
             # eval_metrics['value_traj_viz'] = wandb.Image(value_viz)
-            if 'antmaze' in FLAGS.env_name and 'large' in FLAGS.env_name and FLAGS.env_name.startswith('antmaze'):
-                traj_image = d4rl_ant.trajectory_image(viz_env, viz_dataset, trajs)
-                eval_metrics['trajectories'] = wandb.Image(traj_image)
-                new_metrics_dist = viz.get_distance_metrics(trajs)
-                eval_metrics.update({
-                    f'debugging/{k}': v for k, v in new_metrics_dist.items()})
-                image_v = d4rl_ant.gcvalue_image(
-                    viz_env,
-                    viz_dataset,
-                    partial(get_v, agent),
-                )
-                eval_metrics['v'] = wandb.Image(image_v)
+            # if 'antmaze' in FLAGS.env_name and 'large' in FLAGS.env_name and FLAGS.env_name.startswith('antmaze'):
+            #     traj_image = d4rl_ant.trajectory_image(viz_env, viz_dataset, trajs)
+                # eval_metrics['trajectories'] = wandb.Image(traj_image)
+                # new_metrics_dist = viz.get_distance_metrics(trajs)
+                # eval_metrics.update({
+                    # f'debugging/{k}': v for k, v in new_metrics_dist.items()})
+                # image_v = d4rl_ant.gcvalue_image(
+                #     viz_env,
+                #     viz_dataset,
+                #     partial(get_v, agent),
+                # )
+                # eval_metrics['v'] = wandb.Image(image_v)
 
             save_dict = dict(
                 agent=flax.serialization.to_state_dict(agent),
