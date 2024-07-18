@@ -58,8 +58,8 @@ def compute_actor_loss(agent, batch, network_params):
     else:
         low_goals = batch['low_goals'] 
         
-    v1, v2 = agent.network(observations, cur_goals, method='value')
-    nv1, nv2 = agent.network(next_observations, cur_goals, method='value')
+    v1, v2 = agent.network(observations, cur_goals, method='hilp_value')
+    nv1, nv2 = agent.network(next_observations, cur_goals, method='hilp_value')
     v = (v1 + v2) / 2
     nv = (nv1 + nv2) / 2
 
@@ -122,15 +122,15 @@ def compute_high_actor_loss(agent, batch, network_params):
     observations = batch['observations']
     high_targets = batch['high_targets']
     
-    v1, v2 = agent.network(observations, cur_goals, method='value')
-    nv1, nv2 = agent.network(high_targets, cur_goals, method='value')
+    v1, v2 = agent.network(observations, cur_goals, method='hilp_value')
+    nv1, nv2 = agent.network(high_targets, cur_goals, method='hilp_value')
     
     v = (v1 + v2) / 2
     nv = (nv1 + nv2) / 2
     
     if agent.config['correction_value']:
         #devide
-        diff_v1, diff_v2 = agent.network(observations, high_targets, method='value')
+        diff_v1, diff_v2 = agent.network(observations, high_targets, method='hilp_value')
         diff_v_ = jnp.minimum(diff_v1, diff_v2)
         adv = (nv - v + diff_v_)/2
         # # min
@@ -350,9 +350,9 @@ class JointTrainAgent(iql.IQLAgent):
         def loss_fn(network_params):
             info = {}
             if hilp_update:
-                value_update, actor_update, high_actor_update = False, False, False
+                value_update, actor_update, high_actor_update = True, False, False
             else:
-                value_update, actor_update, high_actor_update = True, True, True
+                value_update, actor_update, high_actor_update = False, True, True
                 
             # Value
             if value_update:
