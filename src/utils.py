@@ -191,16 +191,22 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     if 'networks_hilp_value' in agent.network.params.keys():
         # index = np.random.choice(obs.shape[0], size=1024)
         transition_index = transition_index if transition_index is not None else np.random.choice(obs.shape[0], size=1024)
-        obs_sub = obs[transition_index]
-        hilp_value = agent.network(obs_sub, np.tile(goal_info, (obs_sub.shape[0],1)), method='hilp_value')[0]
-        obs_value = agent.network(obs_sub, np.tile(goal_info, (obs_sub.shape[0],1)), method='value')[0]
-        x, y = obs_sub[:,0], obs_sub[:,1]
-        sc3 = axes[1,0].scatter(x, y, c=obs_value, cmap=cmap, vmin=-101, vmax=0, s=0.01)
-        axes[1,0].set_title('obs_value value')
+        filtered_transition_index, hlip_filtered_index, dones_indexes = transition_index
+        random_obs_sub = obs[dones_indexes][np.random.choice(obs[dones_indexes].shape[0], size=filtered_transition_index.sum())]
+        hilp_filtered_obs_sub = obs[filtered_transition_index]
+        
+        hilp_value = agent.network(hilp_filtered_obs_sub, np.tile(goal_info, (hilp_filtered_obs_sub.shape[0],1)), method='hilp_value')[0]
+        obs_value = agent.network(random_obs_sub, np.tile(goal_info, (random_obs_sub.shape[0],1)), method='value')[0]
+        
+        x_, y_ = random_obs_sub[:,0], random_obs_sub[:,1]
+        x, y = hilp_filtered_obs_sub[:,0], hilp_filtered_obs_sub[:,1]
+        
+        sc3 = axes[1,0].scatter(x_, y_, c=obs_value, cmap=cmap, vmin=-101, vmax=0, s=0.05)
+        axes[1,0].set_title('obs_value random sampled')
         
         # sub goals identity map
-        sc4 = axes[1,1].scatter(x, y, c=hilp_value, cmap=cmap, vmin=-251, vmax=0, s=0.01)
-        axes[1,1].set_title('obs_hilp_value identity')
+        sc4 = axes[1,1].scatter(x, y, c=hilp_value, cmap=cmap, vmin=-101, vmax=0, s=0.05)
+        axes[1,1].set_title('obs_hilp_value filtered')
     
     
     cbar_ax_identity = fig.add_subplot(gs[1,2])
@@ -208,8 +214,8 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     # plt.gca().invert_yaxis()
     
     import os
-    os.makedirs(f'/home/spectrum/study/ASK_legacy/ASK_Baseline/value_img/{g_start_time}', exist_ok=True)
-    plt.savefig(f'/home/spectrum/study/ASK_legacy/ASK_Baseline/value_img/{g_start_time}/value_img_{i}.png', format="PNG", dpi=300)
+    os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}', exist_ok=True)
+    plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/value_img_{i}.png', format="PNG", dpi=300)
     
     
     import io
@@ -229,11 +235,11 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     gs = GridSpec(1, 3, width_ratios=[1, 1, 0.05], wspace=0.8)
     cmap = plt.cm.bwr
     
-    random_index = np.random.choice(obs.shape[0], size=len(transition_index))
+    random_index = np.random.choice(obs.shape[0], size=len(filtered_transition_index))
     x, y = obs[random_index,0], obs[random_index,1]
     sc1 = axes[0].scatter(x, y, s=0.01)
     
-    x_, y_ = obs[transition_index, 0], obs[transition_index, 1]
+    x_, y_ = obs[filtered_transition_index, 0], obs[filtered_transition_index, 1]
     sc2 = axes[1].scatter(x_, y_, s=0.01)
     
     axes[0].set_title('all map value')
@@ -242,8 +248,8 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     # plt.gca().invert_yaxis()
     
     import os
-    os.makedirs(f'/home/spectrum/study/ASK_legacy/ASK_Baseline/value_img/{g_start_time}', exist_ok=True)
-    plt.savefig(f'/home/spectrum/study/ASK_legacy/ASK_Baseline/value_img/{g_start_time}/sampled_obs_img_{i}.png', format="PNG", dpi=300)
+    os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}', exist_ok=True)
+    plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/sampled_obs_img_{i}.png', format="PNG", dpi=300)
     
     
     
@@ -298,7 +304,7 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
         
         # plt.gca().invert_yaxis()
         
-        plt.savefig(f'/home/spectrum/study/ASK_Baseline/value_img/{g_start_time}/identity_img_{i}.png', format="PNG", dpi=300)
+        plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/identity_img_{i}.png', format="PNG", dpi=300)
         
         buf = io.BytesIO()
         plt.savefig(buf, format='png')

@@ -111,7 +111,9 @@ class HILP_GoalConditionedPhiValue(nn.Module):
     def setup(self) -> None:
         repr_class = LayerNormRepresentation if self.use_layer_norm else Representation
         phi = repr_class((*self.hidden_dims, self.skill_dim), activate_final=False, ensemble=self.ensemble)
-        # If HILP on visual-kitchen-partial impala_small; else None # if self.encoder is not None: # phi = nn.Sequential([self.encoder(), phi])
+        # If HILP on visual-kitchen-partial impala_small; else None # 
+        if self.encoder is not None: 
+            phi = nn.Sequential([self.encoder(), phi])
         self.phi = phi
 
     def get_phi(self, observations):
@@ -187,6 +189,7 @@ class HierarchicalActorCritic(nn.Module):
         return self.networks['target_value'](observations, goals, **kwargs)
 
     def actor(self, observations, goals, low_dim_goals=False, state_rep_grad=True, goal_rep_grad=True, **kwargs):
+    
         goal_reps = goals
         if low_dim_goals:
             goal_reps = goals
@@ -226,7 +229,7 @@ class HierarchicalActorCritic(nn.Module):
         return get_rep(self.encoders['vae_state_decoder'], targets=targets)
 # ---------------------------------------------------------------------------------------------------------------
     # 네트워크 초기화
-    def __call__(self, observations=None, goals=None, latent=None):
+    def __call__(self, observations=None, goals=None, subgoals=None, latent=None):
         if self.flag.use_rep == "hiql_goal_encoder":
             rets = {
                 'value': self.value(observations, goals),
@@ -264,6 +267,27 @@ class HierarchicalActorCritic(nn.Module):
                 'value': self.value(observations, goals),
                 'target_value': self.target_value(observations, goals),
                 'actor': self.actor(observations, goals),
+                'high_actor': self.high_actor(observations, goals),
+            }
+        elif self.flag.final_goal:
+            rets = {
+                'hilp_value': self.hilp_value(observations, goals), 
+                'hilp_target_value': self.hilp_target_value(observations, goals),
+                'value': self.value(observations, goals),
+                'target_value': self.target_value(observations, goals),
+                'actor': self.actor(observations, subgoals, goals),
+                'high_actor': self.high_actor(observations, goals),
+            }
+        elif self.flag.high_action_in_hilp:
+            assert subgoals.shape[-1]==32
+            assert observations.shape[-1]==29
+            assert goals.shape[-1]==29
+            rets = {
+                'hilp_value': self.hilp_value(observations, goals), 
+                'hilp_target_value': self.hilp_target_value(observations, goals),
+                'value': self.value(observations, goals),
+                'target_value': self.target_value(observations, goals),
+                'actor': self.actor(observations, subgoals),
                 'high_actor': self.high_actor(observations, goals),
             }
         else:

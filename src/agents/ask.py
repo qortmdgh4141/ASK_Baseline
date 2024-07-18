@@ -259,10 +259,10 @@ class JointTrainAgent(iql.IQLAgent):
             info = {}
             a = 0
             b=0
-            # if hilp_update:
-            #     value_update, actor_update, high_actor_update = False, False, False
-            # else:
-            #     value_update, actor_update, high_actor_update = True, True, True
+            if hilp_update:
+                value_update, actor_update, high_actor_update = False, False, False
+            else:
+                value_update, actor_update, high_actor_update = True, True, True
                 
             # Value
             if value_update:
@@ -384,7 +384,7 @@ class JointTrainAgent(iql.IQLAgent):
         return agent.network(targets=targets, goals=bases, method='policy_goal_encoder')
 
     # HILP 
-    @jax.jit
+    # @jax.jit
     def get_hilp_phi(agent,
                             *,
                             observations: jnp.ndarray) -> jnp.ndarray:
@@ -451,6 +451,8 @@ def create_learner(
         policy_goal_encoder = None # img
         high_policy_state_encoder = None # img
         high_policy_goal_encoder = None # img
+        
+        encoder = None
                 
         value_def = MonolithicVF(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm)
         action_dim = actions.shape[-1]
@@ -481,7 +483,7 @@ def create_learner(
         else:
             high_action_dim = observations.shape[-1]
         
-        hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=False)
+        hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=encoder)
         # hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=(512, 512, 512), use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=False)
         
         

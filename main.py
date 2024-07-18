@@ -22,12 +22,13 @@ import tensorflow as tf
 
 from absl import app, flags
 from functools import partial
-from src.agents import ask as learner
 from src.gc_dataset import GCSDataset
+from src.agents import ask as learner
 from ml_collections import config_flags
 from src.utils import record_video, CsvLogger, plot_value_map
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
 from src import d4rl_utils, d4rl_ant, ant_diagnostics, viz_utils, keynode_utils
+from src.d4rl_utils import plot_obs
 from jaxrl_m.evaluation import supply_rng, evaluate_with_trajectories, EpisodeMonitor
 
 FLAGS = flags.FLAGS
@@ -35,7 +36,7 @@ flags.DEFINE_string('save_dir', f'experiment_output/', '')
 flags.DEFINE_string('run_group', 'EXP', '')
 flags.DEFINE_string('env_name', 'antmaze-ultra-diverse-v0', '')
 flags.DEFINE_string('project', 'test', '')
-flags.DEFINE_string('algo_name', None, '')
+flags.DEFINE_string('algo_name', 'ask_hilp', '') # 'ask', 'ask_hilp'
 
 flags.DEFINE_integer('gpu', 0, '')
 flags.DEFINE_integer('seed', 0, '')
@@ -70,13 +71,13 @@ flags.DEFINE_integer('rep_normalizing_On', 1, '') # 0: rep_norm 제거 // 1: rep
 flags.DEFINE_integer('rep_dim', 10, '')
 
 flags.DEFINE_string('build_keynode_time', "during_training", '') # ["pre_training", "during_training", "post_training"]
-flags.DEFINE_integer('keynode_num', 100, '')
+flags.DEFINE_integer('keynode_num', 20, '')
 flags.DEFINE_integer('kmean_weight_On', 0, '')
 flags.DEFINE_integer('use_goal_info_On', 0, '')
 flags.DEFINE_string('kmean_weight_type', 'rtg_uniform', '')  # ['rtg_discount', 'rtg_uniform', "hilbert_td"]
 flags.DEFINE_integer('specific_dim_On', 1, '')
 flags.DEFINE_float('keynode_ratio', 1, '')
-flags.DEFINE_integer('use_keynode_in_eval_On', 0, '')
+flags.DEFINE_integer('use_keynode_in_eval_On', 1, '')
 
 flags.DEFINE_integer('relative_dist_in_eval_On', 0, '')
 flags.DEFINE_string('mapping_method', 'nearest', '') # nearest, triple, center
@@ -90,9 +91,13 @@ flags.DEFINE_float('vae_kl_coe', 0.0, '')
 # 0610 승호수정 goal only
 flags.DEFINE_string('rep_type', 'concat', '') # 'state' / 'concat'
 # 0610 승호수정 spherical
-flags.DEFINE_float('spherical_On', 1.0, '') # 0:Euclidean Distance // 1: Cosine Similarity
+flags.DEFINE_float('spherical_On', 0, '') # 0:Euclidean Distance // 1: Cosine Similarity
 flags.DEFINE_float('mapping_threshold', 0.0, '')
-flags.DEFINE_integer('kl_loss', 1, '')
+flags.DEFINE_integer('kl_loss', 0, '')
+flags.DEFINE_integer('final_goal', 0, '')
+flags.DEFINE_integer('mse_loss', 0, '') # train high action to key node (mse loss)
+flags.DEFINE_integer('high_action_in_hilp', 0, '') # high action - 0: raw obs 1: hilp space 
+flags.DEFINE_integer('low_actor_train_with_high_actor', 0, '') # low actor train with high action - 0: offline obs low goals 1: trained high level policy action 
 
 wandb_config = default_wandb_config()
 wandb_config.update({
@@ -211,6 +216,11 @@ def main(_):
     FLAGS.config['hilp_skill_dim'] = FLAGS.hilp_skill_dim 
     FLAGS.config['vae_recon_coe'] = FLAGS.vae_recon_coe
     FLAGS.config['kl_loss'] = FLAGS.kl_loss
+    FLAGS.config['final_goal'] = FLAGS.final_goal
+    FLAGS.config['mse_loss'] = FLAGS.mse_loss
+    FLAGS.config['high_action_in_hilp'] = FLAGS.high_action_in_hilp
+    FLAGS.config['low_actor_train_with_high_actor'] = FLAGS.low_actor_train_with_high_actor
+
 
     # Create wandb logger
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
@@ -327,12 +337,23 @@ def main(_):
     example_observation = dataset['observations'][0, np.newaxis]
     example_action = dataset['actions'][0, np.newaxis]
 
+    
+    if 'ask' == FLAGS.algo_name:
+        from src.agents import ask as learner
+    elif 'ask_hilp' == FLAGS.algo_name:
+        from src.agents import ask_hilp as learner
+    
     agent = learner.create_learner(FLAGS.seed,
                                    example_observation,
                                    example_action,
                                    use_layer_norm=FLAGS.use_layer_norm,
                                    flag=FLAGS,
                                    **FLAGS.config)
+    
+    
+    # hilp 이외의 알고리즘 초기화 용
+    find_key_node, hilp_fn, distance_fn, key_nodes = None, None, None, None
+    
     
     # if FLAGS.use_rep == "hiql_goal_encoder":
     #     encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
@@ -391,6 +412,8 @@ def main(_):
         example_trajectory = pretrain_dataset.sample(50, indx=np.arange(0, 50))
     else:
         raise NotImplementedError
+    
+    FLAGS.config['obs_dim'] = example_observation[0].shape[-1]
 
     base_observation = jax.tree_map(lambda arr: arr[0], pretrain_dataset.dataset['observations'])
     observation = env.reset()
@@ -413,74 +436,88 @@ def main(_):
     first_time = time.time()
     last_time = time.time()
     
-    if False:
-        for i in tqdm.tqdm(range(1, 1*10**5 + 1),
-                    desc="hilp_train",
-                    smoothing=0.1,
-                    dynamic_ncols=True):
+    if 'ask' in FLAGS.algo_name:
+        if True:
+            hilp_train_steps = 1*10**5 + 1
+            for i in tqdm.tqdm(range(1, hilp_train_steps),
+                        desc="hilp_train",
+                        smoothing=0.1,
+                        dynamic_ncols=True):
+                pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size, hilp=True)
+                agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, hilp_update=True)
+                if i % FLAGS.log_interval == 0:
+                    train_metrics = {f'training/{k}': v for k, v in update_info.items()}
+                
+                    # if 'ant' in FLAGS.env_name:
+                    #     pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
+                    #     value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'])
+                    #     train_metrics['value_map'] = wandb.Image(value_map)
+
+                    wandb.log(train_metrics, step=i)
+            
+            save_dict = dict(
+            agent=flax.serialization.to_state_dict(agent),
+            config=FLAGS.config.to_dict())
+
+            fname = os.path.join(FLAGS.save_dir, f'params_hilp.pkl')
+            print(f'Saving to {fname}')
+            
+            with open(fname, "wb") as f:
+                pickle.dump(save_dict, f)  
+        else: 
+            if 'antmaze' in FLAGS.env_name:
+                load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/ant_ultra_diverse_hilp_mse.pkl'
+            elif 'kitchen' in FLAGS.env_name:
+                load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/kitchen_mixed_hilp.pkl'
+            elif 'calvin' in FLAGS.env_name:
+                load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/kitchen_mixed_hilp.pkl'
+            else:
+                NotImplementedError
+                
+            with open(load_file, "rb") as f:
+                loaded_dict = pickle.load(f)
+            agent = flax.serialization.from_state_dict(agent, loaded_dict['agent'])
+        
+    
+        distance_fn = jax.jit(agent.get_hilp_value)
+        filtered_transition_index, hlip_filtered_index, dones_indexes = d4rl_utils.get_transition_index(agent, dataset, FLAGS)
+        
+        hilp_observations = d4rl_utils.get_hilp_obs(agent, dataset['observations'], FLAGS)
+        hilp_next_observations = d4rl_utils.get_hilp_obs(agent, dataset['next_observations'], FLAGS)
+        key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index=filtered_transition_index, rep_obs=hilp_observations)
+
+    
+        # find_key_node = key_nodes.find_closest_node
+        # find_key_node = key_nodes.find_closest_node
+        hilp_fn = jax.jit(agent.get_hilp_phi)
+        agent = agent.replace(key_nodes=key_nodes.centroids)
+        
+        if FLAGS.kl_loss or FLAGS.mse_loss or FLAGS.high_action_in_hilp:
+            # add keynode in pretrain_dataset
+            find_key_node_in_dataset = key_nodes.find_key_node_in_dataset
+            key_node, letent_key_node = d4rl_utils.get_latent_key_nodes(find_key_node_in_dataset, hilp_observations, FLAGS)
+            if FLAGS.high_action_in_hilp:
+                dataset = d4rl_utils.add_data(dataset, key_node=letent_key_node, rep_observations=hilp_observations)
+            else:
+                dataset = d4rl_utils.add_data(dataset, key_node=key_node)
+                
+            pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
+
+        if 'ant' in FLAGS.env_name:
+            transition_index = (filtered_transition_index, hlip_filtered_index, dones_indexes)
             pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
-            agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch)
-            if i % FLAGS.log_interval == 0:
-                train_metrics = {f'training/{k}': v for k, v in update_info.items()}
+            value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index)
             
-                if 'ant' in FLAGS.env_name:
-                    pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
-                    value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'])
-                    train_metrics['value_map'] = wandb.Image(value_map)
-
-                wandb.log(train_metrics, step=i)
         
-        save_dict = dict(
-        agent=flax.serialization.to_state_dict(agent),
-        config=FLAGS.config.to_dict())
-
-        fname = os.path.join(FLAGS.save_dir, f'params_hilp.pkl')
-        print(f'Saving to {fname}')
-        
-        with open(fname, "wb") as f:
-            pickle.dump(save_dict, f)  
-    else: 
-        if 'antmaze' in FLAGS.env_name:
-            load_file = '/home/spectrum/study/ASK_legacy/ASK_Baseline/data/ant_ultra_diverse_hilp.pkl'
-        elif 'kitchen' in FLAGS.env_name:
-            load_file = '/home/spectrum/study/ASK_legacy/ASK_Baseline/data/kitchen_mixed_hilp.pkl'
-        elif 'calvin' in FLAGS.env_name:
-            load_file = '/home/spectrum/study/ASK_legacy/ASK_Baseline/data/kitchen_mixed_hilp.pkl'
-        else:
-            NotImplementedError
-            
-        with open(load_file, "rb") as f:
-            loaded_dict = pickle.load(f)
-        agent = flax.serialization.from_state_dict(agent, loaded_dict['agent'])
-        
-    
-    distance_fn = jax.jit(agent.get_hilp_value)
-    transition_index = d4rl_utils.get_transition_index(agent, dataset, FLAGS)
-    hilp_observations = d4rl_utils.get_hilp_obs(dataset['observations'])
-    key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index=transition_index)
-    # bulid keynode에서 생성
-    # key_nodes.construct_nodes(spherical_On=FLAGS.spherical_On)
-    # find_key_node = jax.jit(key_nodes.find_centroid)
-    
-    find_key_node = jax.jit(key_nodes.find_closest_node)
-    agent = agent.replace(key_nodes = key_nodes.pos)
-    
-    if FLAGS.kl_loss:
-        pretrain_dataset = GCSDataset(dataset, find_key_node=find_key_node, **FLAGS.gcdataset.to_dict())
-    else:
-        pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
-
-    if 'ant' in FLAGS.env_name:
-        pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
-        value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index)
-    
+        find_key_node = jax.jit(key_nodes.find_closest_node)
+        # find_key_node = key_nodes.find_closest_node
     
     for i in tqdm.tqdm(range(1, total_steps + 1),
                    desc="main_train",
                    smoothing=0.1,
                    dynamic_ncols=True):
-        pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
-        agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch)
+        pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size, hilp=False)
+        agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, hilp_update=False)
 
         if i % FLAGS.log_interval == 0:
             debug_statistics = get_debug_statistics(agent, pretrain_batch)
@@ -509,6 +546,7 @@ def main(_):
                     eval_temperature=0,
                     config=FLAGS.config,
                     find_key_node=find_key_node,
+                    hilp_fn=hilp_fn,
                     distance_fn=distance_fn,
                     FLAGS=FLAGS,
                     nodes=key_nodes
@@ -519,7 +557,8 @@ def main(_):
                 video = record_video('Video', i, renders=renders)
                 eval_metrics['video'] = video
             print(f"{eval_info['evaluation/episode/return']*100=}")
-            value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], transition_index)
+            # if 'ant' in FLAGS.env_name and 'hilp' not in FLAGS.algo_name:
+            #     value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], transition_index)
             
             # traj_metrics = get_traj_v(agent, example_trajectory)
             # value_viz = viz_utils.make_visual_no_image(
@@ -545,13 +584,13 @@ def main(_):
                 config=FLAGS.config.to_dict()
             )
             if i == 1 or i % FLAGS.save_interval == 0:
-                key_node_fname = os.path.join(FLAGS.save_dir, f'key_node_{i}.pkl')
-                with open(key_node_fname, 'wb') as f:
-                    pickle.dump(np.array(key_nodes.pos), f)
+                # key_node_fname = os.path.join(FLAGS.save_dir, f'key_node_{i}.pkl')
+                # with open(key_node_fname, 'wb') as f:
+                #     pickle.dump(np.array(key_nodes.centroids), f)
                 
-                cos_distances_path = os.path.join(FLAGS.save_dir, f'cos_distances_{i}.pkl')
-                with open(cos_distances_path, 'wb') as f:
-                    pickle.dump(np.array(cos_distances), f)
+                # cos_distances_path = os.path.join(FLAGS.save_dir, f'cos_distances_{i}.pkl')
+                # with open(cos_distances_path, 'wb') as f:
+                #     pickle.dump(np.array(cos_distances), f)
                 
                 fname = os.path.join(FLAGS.save_dir, f'params_{i}.pkl')
                 print(f'Saving to {fname}')
@@ -561,8 +600,8 @@ def main(_):
                 score = eval_metrics['evaluation/final.return']
             else:
                 score = eval_metrics['evaluation/episode.return']
-            wandb.log(eval_metrics, step=i)
-            eval_logger.log(eval_metrics, step=i)
+            wandb.log(eval_metrics, step=hilp_train_steps+i)
+            eval_logger.log(eval_metrics, step=hilp_train_steps+i)
             
     train_logger.close()
     eval_logger.close()

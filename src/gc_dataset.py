@@ -21,7 +21,8 @@ class GCDataset:
     reward_shift: float = -1.0
     terminal: bool = True
     use_rep: str = ""
-    find_key_node : Callable = None
+    # find_key_node_in_dataset : Callable = None
+    key_node: Any = None
     
     @staticmethod
     def get_default_config():
@@ -38,11 +39,12 @@ class GCDataset:
     def __post_init__(self):
         self.terminal_locs, = np.nonzero(self.dataset[self.terminal_key] > 0)
         assert np.isclose(self.p_randomgoal + self.p_trajgoal + self.p_currgoal, 1.0)
-        if self.find_key_node is not None:
-            if 'rep_observations' in self.dataset.keys():
-                _,_,_, self.key_node = self.find_key_node(self.dataset['rep_observations'])
-            else:
-                _,_,_, self.key_node = self.find_key_node(self.dataset['observations'])
+        # if self.find_key_node_in_dataset is not None:
+        #     if 'key_node' in self.dataset.keys():
+        #         self.key_node = self.find_key_node_in_dataset(self.dataset['rep_observations'])
+            # else:
+            #     # self.key_node = self.find_key_node(self.dataset['observations'])
+            #     raise NotImplementedError
 
     def sample_goals(self, indx, p_randomgoal=None, p_trajgoal=None, p_currgoal=None):
         if p_randomgoal is None:
@@ -88,9 +90,8 @@ class GCDataset:
 class GCSDataset(GCDataset):
     way_steps: int = None
     high_p_randomgoal: float = 0.
-    find_key_node : Callable = None
     keynode_ratio: float = 0.5
-    key_node : Any = None
+    # find_key_node_in_dataset : Any = None
     
     @staticmethod
     def get_default_config():
@@ -145,9 +146,11 @@ class GCSDataset(GCDataset):
             batch['low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['observations'])
             batch['high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['observations'])
             
-            if self.key_node is not None:
-                key_node = self.key_node[indx]
-                batch['key_node'] = key_node
+            if 'key_node' in self.dataset.keys():
+                batch['key_node'] = self.dataset['key_node'][indx]
+                if 'rep_observations' in self.dataset.keys():
+                    batch['rep_low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['rep_observations'])
+                
 
                 # if self.keynode_ratio:
                 #     index =  int(self.keynode_ratio* batch_size)

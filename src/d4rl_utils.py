@@ -93,41 +93,41 @@ def get_dataset(env: gym.Env,
         # episode_index
             
 def relabel_ant(env, env_name, dataset, flags):
-    observation_pos = dataset['observations'][:, :2]  
-    new_rewards = np.zeros_like(dataset['rewards'])  
+    observation_pos = dataset['observations'].reshape(999,1000,-1)[:,:,:2]  
+    new_rewards = np.zeros((999,1000))  
     # goal_info = None
-    if flags.use_goal_info_On:
-        d4rl_dataset = env.get_dataset()
-        goal_pos = d4rl_dataset['infos/goal']  
-        goal_pos = goal_pos[:999*1001].reshape(999,1001,2)[:,:1000,:]
-        new_rewards = np.where(np.linalg.norm(observation_pos.reshape(999,1000,2) - goal_pos, axis=-1)<1, 1, 0)
-        new_rewards = new_rewards.reshape(-1).astype(np.float32)
-        goal_info = goal_pos.reshape(999*1000, 2)
-    elif 'ultra' in env_name:
-        unique_goal_pos = np.array([[12,0], [40,0], [52,0], [0,16], [0,28], [32,36], [52,0], [52,16], [52,36]])
-        for idx, obs_pos in enumerate(observation_pos):
-            distance = np.linalg.norm(unique_goal_pos - obs_pos, axis=1)
-            index = np.where(distance <= 0.5, 1, 0)
-            if any(index) and np.linalg.norm(observation_pos[1000*(idx//1000)] - unique_goal_pos[index]) > 20: # 코드 잘못되었음 (추후 수정해야함)
-                new_rewards[idx] = 1.0
+    # if flags.use_goal_info_On:
+    #     d4rl_dataset = env.get_dataset()
+    #     goal_pos = d4rl_dataset['infos/goal']  
+    #     goal_pos = goal_pos[:999*1001].reshape(999,1001,2)[:,:1000,:]
+    #     new_rewards = np.where(np.linalg.norm(observation_pos.reshape(999,1000,2) - goal_pos, axis=-1)<1, 1, 0)
+    #     new_rewards = new_rewards.reshape(-1).astype(np.float32)
+    #     goal_info = goal_pos.reshape(999*1000, 2)
+    if 'ultra' in env_name:
+        # unique_goal_pos = np.array([[12,0], [40,0], [52,0], [0,16], [0,28], [32,36], [52,0], [52,16], [52,36]])
+        last_obs = observation_pos[:,-1,:2]
+        for idx, obs_pos in enumerate(observation_pos.transpose(1,0,2)):
+            distance = np.linalg.norm(last_obs - obs_pos, axis=1)
+            index = np.where(distance <= 2.5, True, False)
+            new_rewards[index, idx] = 1.0
         reshaped_obs = dataset['observations'].reshape(999,1000,-1)
         goal_info = np.repeat(reshaped_obs[:,-1], repeats=1000, axis=0)
         
-    elif 'large' in env_name:
-        unique_goal_pos = np.array([[0,0],[0,12], [0,24], [12,22], [12,8], [20,16], [36,0], [32.75,24.75], [32,16]])
-        for idx, obs_pos in enumerate(observation_pos):
-            distance = np.linalg.norm(unique_goal_pos - obs_pos, axis=1)
-            index = np.where(distance <= 1, 1, 0)
-            if any(index):
-                new_rewards[idx] = 1.0
-    elif 'medium' in env_name:
-        unique_goal_pos = np.array([[20.5, 20.5]])
-        for idx, obs_pos in enumerate(observation_pos):
-            distance = np.linalg.norm(unique_goal_pos - obs_pos, axis=1)
-            index = np.where(distance <= 1, 1, 0)
-            if any(index):
-                new_rewards[idx] = 1.0 
-    return new_rewards, goal_info
+    # elif 'large' in env_name:
+    #     unique_goal_pos = np.array([[0,0],[0,12], [0,24], [12,22], [12,8], [20,16], [36,0], [32.75,24.75], [32,16]])
+    #     for idx, obs_pos in enumerate(observation_pos):
+    #         distance = np.linalg.norm(unique_goal_pos - obs_pos, axis=1)
+    #         index = np.where(distance <= 1, 1, 0)
+    #         if any(index):
+    #             new_rewards[idx] = 1.0
+    # elif 'medium' in env_name:
+    #     unique_goal_pos = np.array([[20.5, 20.5]])
+    #     for idx, obs_pos in enumerate(observation_pos):
+    #         distance = np.linalg.norm(unique_goal_pos - obs_pos, axis=1)
+    #         index = np.where(distance <= 1, 1, 0)
+    #         if any(index):
+    #             new_rewards[idx] = 1.0 
+    return new_rewards.reshape(-1), goal_info
 
 # 질문: 승호 나중에 코드 체크
 def relabel_calvin(env, env_name, dataset, flags):
@@ -296,7 +296,7 @@ def sparse_data(dataset, sparse_data_index=None):
             goal_info = dataset['goal_info']
         )
         
-def add_data(dataset, rep_observations=None, rep_next_observations=None):
+def add_data(dataset, rep_observations=None, rep_next_observations=None, key_node=None):
     return Dataset.create(
             observations=dataset['observations'],
             actions=dataset['actions'].astype(np.float32),
@@ -304,10 +304,11 @@ def add_data(dataset, rep_observations=None, rep_next_observations=None):
             masks=1.0 - dataset['dones_float'].astype(np.float32),
             dones_float=dataset['dones_float'].astype(np.float32),
             next_observations=dataset['next_observations'],
-            returns = dataset['returns'],
+            # returns = dataset['returns'],
             goal_info = dataset['goal_info'],
             rep_observations = rep_observations,
-            rep_next_observations = rep_next_observations
+            rep_next_observations = rep_next_observations,
+            key_node=key_node
         )
     
 def get_rep_observation(encoder_fn, dataset, FLAGS, goal=None):
@@ -391,13 +392,31 @@ def get_transition_index(agent, dataset, flags):
     else:
         NotImplementedError
 
-def get_hilp_obs(agent, dataset, flags):
-    if 'ant' in flags.env_name:
-        return get_transition_index_ant(agent, dataset, flags)
-    elif 'kitchen' in flags.env_name:
-        return get_transition_index_kitchen(agent, dataset, flags)
-    else:
-        NotImplementedError
+def get_hilp_obs(agent, observations, flags):
+    import jax
+    rep_obs = np.zeros((len(observations), flags.hilp_skill_dim), dtype=np.float32)
+    # encoder_fn = jax.jit(agent.get_hilp_phi)
+    encoder_fn = agent.get_hilp_phi
+    # filtered_observations = observations[transition_index]
+    mini_batch = 50000
+    size = len(observations) // mini_batch
+    for i in range(size+1):
+        rep_obs[mini_batch*i:mini_batch*(i+1)] = encoder_fn(observations=observations[mini_batch*i:mini_batch*(i+1)])
+    
+    return rep_obs
+
+def get_latent_key_nodes(find_key_node_in_dataset, observations, flags):
+    # key_node, letent_key_node = find_key_node_in_dataset(observations)
+    key_node = np.zeros((len(observations),flags.config['obs_dim']), dtype=np.float32)
+    letent_key_node = np.zeros((len(observations), flags.hilp_skill_dim), dtype=np.float32)
+    
+    mini_batch = 50000
+    size = len(observations) // mini_batch
+    for i in range(size+1):
+        key_node[mini_batch*i:mini_batch*(i+1)], letent_key_node[mini_batch*i:mini_batch*(i+1)] = find_key_node_in_dataset(observations[mini_batch*i:mini_batch*(i+1)])
+    
+    return key_node, letent_key_node
+
 
 def get_transition_index_ant(agent, dataset, flags):
     import jax
@@ -416,21 +435,33 @@ def get_transition_index_ant(agent, dataset, flags):
     reshape_values = values.reshape(999, 1000)
     tdd_ = reshape_values[:, 1:] - reshape_values[:, :-1]
     tdd = jnp.pad(tdd_, ((0, 0), (1, 0)), constant_values=tdd_[tdd_>0].mean())
-    tdds = []
-    indexes = np.zeros_like(values, dtype=bool)
+    dones_indexes = np.ones_like(reshape_values, dtype=bool)
  
     for i, t in enumerate(tdd):
-        tdds.extend(t[:dones_index[i]])
-        indexes[:dones_index[i]] = False
+        dones_indexes[i,dones_index[i]:] = False
     td_flatten = np.array(tdd, dtype=np.float32)
+    tdd = tdd.at[dones_indexes==False].set(0)
+    hlip_filtered_index = np.where(tdd > tdd[tdd>0].mean(), True, False)
     
-    transition_index = np.where(tdd > tdd[tdd>0].mean(), True, False)
-    transition_index = transition_index * indexes
-    tdd = tdd[transition_index]
-    print(f'before filtered tdds {tdd[0,0]=}, {tdd.min()=}, {tdd.max()=}, {transition_index.mean()=}, {td_flatten[transition_index].mean()=}')
-    print(f'after filtered tdds {td_flatten[0,0]=}, {td_flatten.min()=}, {td_flatten.max()=}, {transition_index.mean()*100=} % used dataset, {td_flatten[transition_index].mean()=}')
+    # Q1 = np.percentile(tdd, 25)
+    # Q3 = np.percentile(tdd, 75)
+    # IQR = Q3 - Q1
+    # lower_bound = Q1 - 1.5 * IQR
+    # upper_bound = Q3 + 1.5 * IQR
+
+    # index = np.where(tdd >= lower_bound, True, False) & np.where(tdd <= upper_bound, True, False)
     
-    return np.array(transition_index).astype(bool)
+    # tdd = tdd[index]
+    filtered_transition_index = hlip_filtered_index * dones_indexes
+    # hlip_filtered_index = hlip_filtered_index * dones_indexes
+    
+    
+    # filtered_transition_index = hlip_filtered_index * dones_indexes * index
+    tdd = tdd[hlip_filtered_index]
+    print(f'before filtered tdds {tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {hlip_filtered_index.mean()=}, {td_flatten[hlip_filtered_index].mean()=}')
+    print(f'after filtered tdds {td_flatten[0,0]=}, {td_flatten.min()=}, {td_flatten.max()=}, {hlip_filtered_index.mean()*100=:.2f} % used dataset, {td_flatten[hlip_filtered_index].mean()=}')
+    
+    return filtered_transition_index.reshape(-1).astype(bool), hlip_filtered_index.reshape(-1).astype(bool), dones_indexes.reshape(-1)
 
 def get_transition_index_kitchen(agent, dataset, flags):
     import jax
@@ -444,12 +475,41 @@ def get_transition_index_kitchen(agent, dataset, flags):
 
     
     
-    tdd_ = values[1:] - values[:-1]
-    index = dataset['dones_float']==1
-    mean_tdd = tdd_[tdd_>0].mean()
-    tdd_[index[:-1]] = mean_tdd
-    tdd = np.concatenate(([mean_tdd], tdd_))
-    transition_index = tdd > tdd.mean()
-    print(f'{tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {transition_index.mean()=},, {tdd[transition_index].mean()=}')
+    # tdd_ = values[1:] - values[:-1]
+    # index = dataset['dones_float']==1
+    # mean_tdd = tdd_[tdd_>0].mean()
+    # tdd_[index[:-1]] = mean_tdd
+    # tdd = np.concatenate(([mean_tdd], tdd_))
+    # transition_index = tdd > tdd.mean()
+    # print(f'{tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {transition_index.mean()=},, {tdd[transition_index].mean()=}')
     
-    return np.array(transition_index).astype(bool)
+    tdd_ = values[1:] - values[:-1]
+    first_tdd = jnp.array([tdd_[tdd_>0].mean()])
+    tdd = jnp.concatenate([first_tdd, tdd_],axis=0)
+    hlip_filtered_index = np.where(tdd > tdd[tdd>0].mean(), True, False)
+    dones_indexes = np.where(dataset['dones_float']==1, True, False)
+    
+    hlip_filtered_index = hlip_filtered_index.reshape(-1).astype(bool)
+    
+    print(f'{tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {hlip_filtered_index.mean()=},, {tdd[hlip_filtered_index].mean()=}')
+    
+    
+    return hlip_filtered_index, hlip_filtered_index, dones_indexes
+
+def plot_obs(observations, s=1, xlim=55, ylim=45):
+    
+    x, y = observations[:, 0], observations[:, 1]
+    import matplotlib.pyplot as plt
+    
+    fig = plt.figure(figsize=(10,8))
+    print(f'{x.shape=}, {y.shape}')
+    plt.scatter(x,y, s=s)
+    plt.xlim([0,xlim])
+    plt.ylim([0,ylim])
+    import time
+    g_start_time = time.strftime('%m-%d_%H-%M')
+    import os
+    # os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/plot_ant/{g_start_time}', exist_ok=True)
+    plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/plot_ant/{g_start_time}_obs.png', format="PNG", dpi=300)
+    
+    

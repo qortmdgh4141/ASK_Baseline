@@ -51,7 +51,7 @@ def kitchen_render(kitchen_env, wh=64):
 def evaluate_with_trajectories(
         policy_fn, high_policy_fn, env: gym.Env, env_name, num_episodes: int, base_observation=None, num_video_episodes=0,
         eval_temperature=0, epsilon=0, 
-        config=None, find_key_node = None, FLAGS = None, distance_fn=None, nodes=None
+        config=None, find_key_node = None, hilp_fn=None, FLAGS = None, distance_fn=None, nodes=None
 ) -> Dict[str, float]:
     trajectories = []
     stats = defaultdict(list)
@@ -93,41 +93,48 @@ def evaluate_with_trajectories(
         interval = interval if FLAGS.relative_dist_in_eval_On else 1
         dist = 0
         init_dist = 1e5 if FLAGS.relative_dist_in_eval_On else 0
-        
         cos_distances = []
         
             
         while not done:
                
             if h_step == interval or dist < init_dist * 0.5:
-                cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=eval_temperature)
-                cur_obs_subgoal = observation + cur_obs_subgoal
-                    
+                cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=0)
+                if FLAGS.high_action_in_hilp:
+                    cur_obs_goal = plot_subgoal = cur_obs_subgoal
+                else:
+                    cur_obs_goal = plot_subgoal = observation + cur_obs_subgoal
+                if config['use_keynode_in_eval_On']:
+                    # cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=0, num_samples=1)
+                    if FLAGS.high_action_in_hilp:
+                        distance, cur_obs_latent_key_node, hilp_subgoal, cur_obs_key_node  = find_key_node(jnp.concatenate([hilp_fn(observations=observation), cur_obs_subgoal], axis=0))
+                        cur_obs_goal = cur_obs_latent_key_node
+                    else:
+                        distance, _, hilp_subgoal, cur_obs_key_node  = find_key_node(hilp_fn(observations=jnp.vstack([observation, cur_obs_subgoal])).reshape(-1))
+                        cur_obs_goal = cur_obs_key_node
+                        
                 if FLAGS.relative_dist_in_eval_On:
                     init_dist = np.linalg.norm(cur_obs_subgoal - observation)
-                    
-                cur_obs_goal = cur_obs_sub_goal = cur_obs_subgoal 
-                h_step = 0
-            
+                
+
+                # if config['use_keynode_in_eval_On']:
+                    # distance, nodes, centroids, cur_obs_key_node = find_key_node(cur_obs_sub_goal)
+                    # cur_obs_key_node = nodes.find_centroid(cur_obs_sub_goal.reshape(1,-1))
+                    # cos_distance, _, _, cur_obs_key_node = nodes.find_centroid(cur_obs_sub_goal.reshape(1,-1))
+                    # if cos_distance >= FLAGS.mapping_threshold:
+                    #     diff_sub_goal_node = np.linalg.norm(cur_obs_key_node - cur_obs_sub_goal, axis=-1, keepdims=True)
+                    #     diff_sub_goal_nodes.append(diff_sub_goal_node)
+                    # cos_distances.append(cos_distance)
 
                 dist = np.linalg.norm(cur_obs_goal[node_dim] - observation[node_dim])
+                h_step = 0
                                        
             h_step +=1
             h_steps.append(h_step)
             dists.append(dist)
         
-            if config['use_keynode_in_eval_On']:
-                cur_obs_key_node = find_key_node(cur_obs_sub_goal.reshape(1,-1))
-                # cur_obs_key_node = nodes.find_centroid(cur_obs_sub_goal.reshape(1,-1))
-                # cos_distance, _, _, cur_obs_key_node = nodes.find_centroid(cur_obs_sub_goal.reshape(1,-1))
-                # if cos_distance >= FLAGS.mapping_threshold:
-                #     diff_sub_goal_node = np.linalg.norm(cur_obs_key_node - cur_obs_sub_goal, axis=-1, keepdims=True)
-                #     diff_sub_goal_nodes.append(diff_sub_goal_node)
-                cur_obs_goal = cur_obs_key_node  
-                # cos_distances.append(cos_distance)
     
-            cur_obs_goal_rep = cur_obs_goal                
-            action = policy_fn(observations=observation, goals=cur_obs_goal_rep, low_dim_goals=True, temperature=eval_temperature)
+            action = policy_fn(observations=observation, goals=cur_obs_goal, low_dim_goals=True, temperature=eval_temperature)
             
             if 'antmaze' in env_name:
                 next_observation, r, done, info = env.step(action)
@@ -164,7 +171,7 @@ def evaluate_with_trajectories(
                     size = 500
                     box_size = 0.015
                     cur_frame = env.render(mode='rgb_array', width=size, height=size).transpose(2, 0, 1).copy()
-                    if ('large' in env_name or 'ultra' in env_name):
+                    if ('large' in env_name or 'ultra' in env_name) and not FLAGS.high_action_in_hilp:
                         def xy_to_pixxy(x, y):
                             if 'large' in env_name:
                                 pixx = (x / 36) * (0.93 - 0.07) + 0.07
@@ -175,14 +182,15 @@ def evaluate_with_trajectories(
                             return pixx, pixy
 
                         # subgoal : gray
-                        x_sub_goal, y_sub_goal = cur_obs_sub_goal[:2]
+                        x_sub_goal, y_sub_goal = plot_subgoal[:2]
                         sub_pixx, sub_pixy = xy_to_pixxy(x_sub_goal, y_sub_goal)
                         cur_frame[:3, int((sub_pixy - box_size) * size):int((sub_pixy + box_size) * size), int((sub_pixx - box_size) * size):int((sub_pixx + box_size) * size)] = 160
-                        # key node : pink
-                        x_node, y_node = cur_obs_key_node[:2]
-                        node_pixx, node_pixy = xy_to_pixxy(x_node, y_node)
-                        cur_frame[0, int((node_pixy - box_size) * size):int((node_pixy + box_size) * size), int((node_pixx - box_size) * size):int((node_pixx + box_size) * size)] = 255
-                        cur_frame[2, int((node_pixy - box_size) * size):int((node_pixy + box_size) * size), int((node_pixx - box_size) * size):int((node_pixx + box_size) * size)] = 127
+                        if config['use_keynode_in_eval_On']:
+                            # key node : pink
+                            x_node, y_node = cur_obs_key_node[:2]
+                            node_pixx, node_pixy = xy_to_pixxy(x_node, y_node)
+                            cur_frame[0, int((node_pixy - box_size) * size):int((node_pixy + box_size) * size), int((node_pixx - box_size) * size):int((node_pixx + box_size) * size)] = 255
+                            cur_frame[2, int((node_pixy - box_size) * size):int((node_pixy + box_size) * size), int((node_pixx - box_size) * size):int((node_pixx + box_size) * size)] = 127
                     render.append(cur_frame)
                     
                 elif 'kitchen' in env_name:
