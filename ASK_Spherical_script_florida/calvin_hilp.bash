@@ -1,13 +1,12 @@
 #!/bin/bash
-source /home/qortmdgh4141/anaconda3/etc/profile.d/conda.sh
-conda activate bsh_knit
+source /home/tako/anaconda3/etc/profile.d/conda.sh
+conda activate HI_calvin
 
 script_dir=$(dirname "$(realpath "$0")") # 현재 스크립트의 절대 경로를 구함
 bash_script_path="${script_dir}/experiment_output" # experiment_output 경로를 구성
 parent_dir=$(dirname "$script_dir") # 현재 스크립트의 부모 디렉토리를 구함
-main_py_path="/home/qortmdgh4141/disk/HIQL_Team_Project/TG/main.py" # 부모 디렉토리에서 main.py 파일의 경로를 구성
+main_py_path="/home/spectrum/study/AAAI/ASK_Baseline/main.py" # 부모 디렉토리에서 main.py 파일의 경로를 구성
 
-cd /home/qortmdgh4141/disk/HIQL_Team_Project/TG/
 # current_time="03-03_09:23"
 current_time=$(date "+%m-%d_%H:%M")
 #current_time="01-12_16:28"
@@ -15,7 +14,7 @@ project="hilp-calvin"
 
 extra_name="ask"
 
-gpu="2"
+gpu="0"
 start=0
 end_=0
 

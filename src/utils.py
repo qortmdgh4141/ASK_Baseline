@@ -316,9 +316,7 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
         cbar_ax = fig.add_subplot(gs[0,2])
         cbar = plt.colorbar(sc4,  cax=cbar_ax, label='probs')
         
-        # plt.gca().invert_yaxis()
-        
-        plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/identity_img_{i}.png', format="PNG", dpi=300)
+        plt.savefig(os.path.join(save_path, 'identity_img_{i}.png'), format="PNG", dpi=300)
         
         buf = io.BytesIO()
         plt.savefig(buf, format='png')
