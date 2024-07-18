@@ -123,13 +123,15 @@ class GCSDataset(GCDataset):
 
         batch['goals'] = jax.tree_map(lambda arr: arr[goal_indx], self.dataset['observations'])
 
+        # final state in each trajectory
+        final_state_indx = self.terminal_locs[np.searchsorted(self.terminal_locs, indx)]
+        # subgoal sampled from its own trajectory for low level training
+        way_indx = np.minimum(indx + self.way_steps, final_state_indx)
+        batch['low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['observations'])
+        
         if hilp == False:
-            # final state in each trajectory
-            final_state_indx = self.terminal_locs[np.searchsorted(self.terminal_locs, indx)]
-            # subgoal sampled from its own trajectory for low level training
-            way_indx = np.minimum(indx + self.way_steps, final_state_indx)
-            distance = np.random.rand(batch_size)
             # subgoal sampled from its own trajectory with distance ratio for high level training
+            distance = np.random.rand(batch_size)
             high_traj_goal_indx = np.round((np.minimum(indx + 1, final_state_indx) * distance + final_state_indx * (1 - distance))).astype(int)
             # subgoal sampled from its own trajectory for high level training 
             high_traj_target_indx = np.minimum(indx + self.way_steps, high_traj_goal_indx)
@@ -143,7 +145,6 @@ class GCSDataset(GCDataset):
             
             batch['high_goals'] = jax.tree_map(lambda arr: arr[high_goal_idx], self.dataset['observations'])
             
-            batch['low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['observations'])
             batch['high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['observations'])
             
             if 'key_node' in self.dataset.keys():

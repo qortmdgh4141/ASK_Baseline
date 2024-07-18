@@ -452,10 +452,11 @@ def main(_):
                 if i % FLAGS.log_interval == 0:
                     train_metrics = {f'training/{k}': v for k, v in update_info.items()}
                 
-                    # if 'ant' in FLAGS.env_name:
-                    #     pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
-                    #     value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'])
-                    #     train_metrics['value_map'] = wandb.Image(value_map)
+                    if 'ant' in FLAGS.env_name:
+                        pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
+                        value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'])
+                        if i % FLAGS.log_interval *5 == 0:
+                            train_metrics['value_map'] = wandb.Image(value_map)
 
                     wandb.log(train_metrics, step=i)
             
