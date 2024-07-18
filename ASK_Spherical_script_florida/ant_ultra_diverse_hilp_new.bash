@@ -13,9 +13,9 @@ project="hilp-ant-ultra"
 
 extra_name="ask_mse"
 
-gpu="1"
+gpu="0"
 start=0
-end_=3
+end_=0
 
 use_rep=''                     # ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]
 kl_loss=0

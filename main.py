@@ -442,7 +442,7 @@ def main(_):
     
     if 'ask' in FLAGS.algo_name:
         if True:
-            hilp_train_steps = 1*10**5 + 1
+            hilp_train_steps = 2*10**5 + 1
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
                         smoothing=0.1,
