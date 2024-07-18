@@ -194,13 +194,13 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
             filtered_transition_index, hlip_filtered_index, dones_indexes = transition_index
             random_obs_sub = obs[dones_indexes][np.random.choice(obs[dones_indexes].shape[0], size=filtered_transition_index.sum())]
             hilp_filtered_obs_sub = obs[filtered_transition_index]
-            
+            s=0.01
         
         else:
             filtered_transition_index = transition_index = np.random.choice(obs.shape[0], size=1024)
             
             random_obs_sub = hilp_filtered_obs_sub = obs[np.random.choice(obs.shape[0], size=1024)]
-        
+            s=1
         
         hilp_value = agent.network(hilp_filtered_obs_sub, np.tile(goal_info, (hilp_filtered_obs_sub.shape[0],1)), method='hilp_value')[0]
         obs_value = agent.network(random_obs_sub, np.tile(goal_info, (random_obs_sub.shape[0],1)), method='value')[0]
@@ -208,11 +208,11 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
         x_, y_ = random_obs_sub[:,0], random_obs_sub[:,1]
         x, y = hilp_filtered_obs_sub[:,0], hilp_filtered_obs_sub[:,1]
         
-        sc3 = axes[1,0].scatter(x_, y_, c=obs_value, cmap=cmap, vmin=-101, vmax=0, s=0.05)
+        sc3 = axes[1,0].scatter(x_, y_, c=obs_value, cmap=cmap, s=s)
         axes[1,0].set_title('obs_value random sampled')
         
         # sub goals identity map
-        sc4 = axes[1,1].scatter(x, y, c=hilp_value, cmap=cmap, vmin=-101, vmax=0, s=0.05)
+        sc4 = axes[1,1].scatter(x, y, c=hilp_value, cmap=cmap, s=s)
         axes[1,1].set_title('obs_hilp_value filtered')
     
     
@@ -250,10 +250,10 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     
     random_index = np.random.choice(obs.shape[0], size=len(filtered_transition_index))
     x, y = obs[random_index,0], obs[random_index,1]
-    sc1 = axes[0].scatter(x, y, s=0.01)
+    sc1 = axes[0].scatter(x, y, s=s)
     
     x_, y_ = obs[filtered_transition_index, 0], obs[filtered_transition_index, 1]
-    sc2 = axes[1].scatter(x_, y_, s=0.01)
+    sc2 = axes[1].scatter(x_, y_, s=s)
     
     axes[0].set_title('all map value')
     # cbar_ax_identity = fig.add_subplot(gs[0,2])
