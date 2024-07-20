@@ -100,6 +100,7 @@ flags.DEFINE_integer('high_action_in_hilp', 0, '') # high action - 0: raw obs 1:
 flags.DEFINE_integer('low_actor_train_with_high_actor', 0, '') # low actor train with high action - 0: offline obs low goals 1: trained high level policy action 
 flags.DEFINE_integer('correction_value', 0, '') # value ratio correction
 flags.DEFINE_integer('n_step_hilp', 0, '') # value ratio correction
+flags.DEFINE_string('distance', '', '') # value ratio correction
 
 wandb_config = default_wandb_config()
 wandb_config.update({
@@ -224,6 +225,7 @@ def main(_):
     FLAGS.config['low_actor_train_with_high_actor'] = FLAGS.low_actor_train_with_high_actor
     FLAGS.config['correction_value'] = FLAGS.correction_value
     FLAGS.config['n_step_hilp'] = FLAGS.n_step_hilp
+    FLAGS.config['distance'] = FLAGS.distance
 
 
     # Create wandb logger
@@ -442,7 +444,7 @@ def main(_):
     
     if 'ask' in FLAGS.algo_name:
         if True:
-            hilp_train_steps = 2*10**5 + 1
+            hilp_train_steps = 1*10**5 + 1
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
                         smoothing=0.1,

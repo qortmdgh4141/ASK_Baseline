@@ -285,20 +285,56 @@ def hilp_compute_value_loss(agent, batch, network_params):
     value_loss2 = expectile_loss(adv, q2 - v2, agent.config['pretrain_expectile']).mean()
     
     if agent.config['n_step_hilp']:
-        # obs -> target : value
-        (obs_target_v1, obs_target_v2) = agent.network(batch['observations'], batch['low_goals'], method='hilp_value', params=network_params)
-        obs_target_v = jnp.minimum(obs_target_v1, obs_target_v2)
-        
-        # target -> goals : value
-        (target_goal_v1, target_goal_v2) = agent.network(batch['low_goals'], batch['goals'], method='hilp_target_value')
-        target_goal_v = jnp.minimum(target_goal_v1, target_goal_v2)
-        
-        # target -> goals : value
-        (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
-        obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
-        
-        
-        n_step_loss = jnp.mean(((obs_target_v + target_goal_v) - (obs_next_obs_v + next_v))**2)
+        if agent.config['distance'] == 'log': # 'distance_log'
+            # obs -> target : value
+            (obs_target_v1, obs_target_v2) = agent.network(batch['observations'], batch['low_goals'], method='hilp_value', params=network_params)
+            obs_target_v = jnp.minimum(obs_target_v1, obs_target_v2)
+            distance_obs_target_v = jnp.log(np.minimum(1-obs_target_v, 1e-6))
+            # target -> goals : value
+            (target_goal_v1, target_goal_v2) = agent.network(batch['low_goals'], batch['goals'], method='hilp_target_value', params=network_params)
+            target_goal_v = jnp.minimum(target_goal_v1, target_goal_v2)
+            distance_target_goal_v = jnp.log(np.minimum(1-target_goal_v, 1e-6))
+            # obs -> next_obs : value
+            (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
+            obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
+            distance_obs_next_obs_v = jnp.log(np.minimum(1-obs_next_obs_v, 1e-6))
+            
+            distance_next_v = jnp.log(np.minimum(1-next_v, 1e-6))
+            
+            n_step_loss = jnp.mean(((distance_obs_target_v + distance_target_goal_v) - (distance_obs_next_obs_v + distance_next_v))**2)
+        elif agent.config['distance'] =='first':
+            # obs -> target : value
+            (obs_target_v1, obs_target_v2) = agent.network(batch['observations'], batch['low_goals'], method='hilp_value', params=network_params)
+            obs_target_v = jnp.minimum(obs_target_v1, obs_target_v2)
+            # obs -> next_obs : value
+            (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
+            obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
+            # next -> tareget : value
+            (next_obs_target_v1, next_obs_target_v2) = agent.network(batch['next_observations'], batch['low_goals'], method='hilp_target_value')
+            next_obs_target_v = jnp.minimum(next_obs_target_v1, next_obs_target_v2)
+            
+            #first
+            n_step_loss_1 = jnp.mean((obs_target_v  - (obs_next_obs_v + next_obs_target_v))**2)
+            n_step_loss = n_step_loss_1
+            
+        elif agent.config['distance'] =='second':
+            # obs -> target : value
+            (obs_target_v1, obs_target_v2) = agent.network(batch['observations'], batch['low_goals'], method='hilp_value', params=network_params)
+            obs_target_v = jnp.minimum(obs_target_v1, obs_target_v2)
+            # target -> goals : value
+            (target_goal_v1, target_goal_v2) = agent.network(batch['low_goals'], batch['goals'], method='hilp_target_value', params=network_params)
+            target_goal_v = jnp.minimum(target_goal_v1, target_goal_v2)
+            # target -> goals : value
+            (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
+            obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
+            # next -> tareget : value
+            (next_obs_target_v1, next_obs_target_v2) = agent.network(batch['next_observations'], batch['low_goals'], method='hilp_target_value')
+            next_obs_target_v = jnp.minimum(next_obs_target_v1, next_obs_target_v2)
+            
+            # second
+            n_step_loss_1 = jnp.mean((obs_target_v  - (obs_next_obs_v + next_obs_target_v))**2)
+            n_step_loss_2 = jnp.mean(((obs_target_v + target_goal_v) - (obs_next_obs_v + next_v))**2)
+            n_step_loss = n_step_loss_1 + n_step_loss_2
     
         value_loss = value_loss1 + value_loss2 + n_step_loss
     else:

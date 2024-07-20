@@ -279,9 +279,6 @@ class HierarchicalActorCritic(nn.Module):
                 'high_actor': self.high_actor(observations, goals),
             }
         elif self.flag.high_action_in_hilp:
-            assert subgoals.shape[-1]==32
-            assert observations.shape[-1]==29
-            assert goals.shape[-1]==29
             rets = {
                 'hilp_value': self.hilp_value(observations, goals), 
                 'hilp_target_value': self.hilp_target_value(observations, goals),
