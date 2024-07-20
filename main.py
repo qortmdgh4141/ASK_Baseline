@@ -2,7 +2,7 @@ import os
 import sys
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false" 
-gpu_index = sys.argv[sys.argv.index('--gpu') + 1] if '--gpu' in sys.argv else "1" # Default to GPU 0 if no --gpu argument
+gpu_index = sys.argv[sys.argv.index('--gpu') + 1] if '--gpu' in sys.argv else "2" # Default to GPU 0 if no --gpu argument
 os.environ['CUDA_VISIBLE_DEVICES'] = gpu_index
 print("Using GPU: ", gpu_index)
 
@@ -442,8 +442,21 @@ def main(_):
     first_time = time.time()
     last_time = time.time()
     
+    
+    if True:
+        if 'antmaze' in FLAGS.env_name:
+            load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/ant_ultra_diverse_d.98_dim_64_second_hilp.pkl'
+        elif 'kitchen' in FLAGS.env_name:
+            load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/kitchen_mixed_hilp.pkl'
+        elif 'calvin' in FLAGS.env_name:
+            load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/kitchen_mixed_hilp.pkl'
+        else:
+            NotImplementedError
+    else:
+        load_file = None
+    
     if 'ask' in FLAGS.algo_name:
-        if True:
+        if load_file is not None:
             hilp_train_steps = 1*10**5 + 1
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
@@ -454,7 +467,7 @@ def main(_):
                 if i % FLAGS.log_interval == 0:
                     train_metrics = {f'training/{k}': v for k, v in update_info.items()}
                 
-                    if 'ant' in FLAGS.env_name and i % FLAGS.log_interval *50 == 0:
+                    if 'ant' in FLAGS.env_name and i % (FLAGS.log_interval *50) == 0:
                         pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
                         value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
                         train_metrics['value_map'] = wandb.Image(value_map)
@@ -471,15 +484,6 @@ def main(_):
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)  
         else: 
-            if 'antmaze' in FLAGS.env_name:
-                load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/ant_ultra_diverse_hilp_mse.pkl'
-            elif 'kitchen' in FLAGS.env_name:
-                load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/kitchen_mixed_hilp.pkl'
-            elif 'calvin' in FLAGS.env_name:
-                load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/kitchen_mixed_hilp.pkl'
-            else:
-                NotImplementedError
-                
             with open(load_file, "rb") as f:
                 loaded_dict = pickle.load(f)
             agent = flax.serialization.from_state_dict(agent, loaded_dict['agent'])

@@ -226,6 +226,7 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     save_path = os.path.join(dir_name, 'value_img', g_start_time)
     os.makedirs(save_path, exist_ok=True)
     plt.savefig(os.path.join(save_path, f'sampled_obs_img_{i}.png'), format="PNG", dpi=300)
+    plt.close()
     
     # os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}', exist_ok=True)
     # plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/value_img_{i}.png', format="PNG", dpi=300)
@@ -263,7 +264,7 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     # os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}', exist_ok=True)
     # plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/sampled_obs_img_{i}.png', format="PNG", dpi=300)
     plt.savefig(os.path.join(save_path, f'identity_img_{i}.png'), format="PNG", dpi=300)
-
+    plt.close()
     
     
     
