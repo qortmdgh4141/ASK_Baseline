@@ -458,11 +458,17 @@ class JointTrainAgent(iql.IQLAgent):
         # HILP update
         # if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
         if hilp_update:
+            params = unfreeze(new_network.params)
+            
             hilp_new_target_params = jax.tree_map(
             lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_hilp_value'], agent.network.params['networks_hilp_target_value']
             )
-            params = unfreeze(new_network.params)
             params['networks_hilp_target_value'] = hilp_new_target_params
+            
+            hilp_new_params = jax.tree_map(
+            lambda op, np: np * agent.config['target_update_rate'] + op * (1 - agent.config['target_update_rate']), agent.network.params['networks_hilp_value'], new_network.params['networks_hilp_value']
+            )
+            params['networks_hilp_target_value'] = hilp_new_params
             new_network = new_network.replace(params=freeze(params))
             
         # VAE update (질문: 업데이트 방식 바꿔야할듯? 아래 업데이트 하는 이유는 무엇인가?)

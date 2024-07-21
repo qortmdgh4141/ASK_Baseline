@@ -99,7 +99,7 @@ def evaluate_with_trajectories(
         while not done:
                
             # if h_step == interval or dist < init_dist * 0.5:
-            if h_step == interval:
+            if h_step == interval or step==0:
                 cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=0)
                 if FLAGS.high_action_in_hilp:
                     cur_obs_goal = plot_subgoal = cur_obs_subgoal

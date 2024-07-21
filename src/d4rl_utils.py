@@ -312,7 +312,7 @@ def add_data(dataset, rep_observations=None, rep_next_observations=None, key_nod
         )
     
 def get_rep_observation(encoder_fn, dataset, FLAGS, goal=None):
-    mini_batch = 50000
+    mini_batch = 20000
     size = len(dataset['observations']) // mini_batch
     rep_observations = np.zeros((len(dataset['observations']), FLAGS.rep_dim), dtype=np.float32)
     if 'ant' in FLAGS.env_name:
@@ -331,7 +331,7 @@ def get_rep_observation(encoder_fn, dataset, FLAGS, goal=None):
 
 # 0610 승호수정 goal only
 def get_rep_observation_goal_only(encoder_fn, dataset, FLAGS):
-    mini_batch = 50000
+    mini_batch = 20000
     size = len(dataset['observations']) // mini_batch
     rep_observations = np.zeros((len(dataset['observations']), FLAGS.rep_dim), dtype=np.float32)
     for i in range(size+1):
@@ -357,7 +357,7 @@ def get_rep_observation_spherical(encoder_fn, dataset, FLAGS):
     return rep_observations
 
 def get_hilp_rep_observation(encoder_fn, dataset, FLAGS, goal=None):
-    mini_batch = 50000
+    mini_batch = 20000
     size = len(dataset['observations']) // mini_batch
     rep_observations = np.zeros((len(dataset['observations']), FLAGS.rep_dim), dtype=np.float32)
     for i in range(size+1):
@@ -398,7 +398,7 @@ def get_hilp_obs(agent, observations, flags):
     # encoder_fn = jax.jit(agent.get_hilp_phi)
     encoder_fn = agent.get_hilp_phi
     # filtered_observations = observations[transition_index]
-    mini_batch = 50000
+    mini_batch = 20000
     size = len(observations) // mini_batch
     for i in range(size+1):
         rep_obs[mini_batch*i:mini_batch*(i+1)] = encoder_fn(observations=observations[mini_batch*i:mini_batch*(i+1)])
@@ -410,7 +410,7 @@ def get_latent_key_nodes(find_key_node_in_dataset, observations, flags):
     key_node = np.zeros((len(observations),flags.config['obs_dim']), dtype=np.float32)
     letent_key_node = np.zeros((len(observations), flags.hilp_skill_dim), dtype=np.float32)
     
-    mini_batch = 50000
+    mini_batch = 20000
     size = len(observations) // mini_batch
     for i in range(size+1):
         key_node[mini_batch*i:mini_batch*(i+1)], letent_key_node[mini_batch*i:mini_batch*(i+1)] = find_key_node_in_dataset(observations[mini_batch*i:mini_batch*(i+1)])
@@ -420,7 +420,7 @@ def get_latent_key_nodes(find_key_node_in_dataset, observations, flags):
 
 def get_transition_index_ant(agent, dataset, flags):
     import jax
-    mini_batch = 50000
+    mini_batch = 20000
     size = len(dataset['observations']) // mini_batch
     values = np.zeros(len(dataset['observations']), dtype=np.float32)
     value_fn = jax.jit(agent.get_hilp_value)
@@ -477,7 +477,7 @@ def get_transition_index_ant(agent, dataset, flags):
 
 def get_transition_index_kitchen(agent, dataset, flags):
     import jax
-    mini_batch = 50000
+    mini_batch = 20000
     size = len(dataset['observations']) // mini_batch
     values = np.zeros(len(dataset['observations']), dtype=np.float32)
     value_fn = jax.jit(agent.get_hilp_value)
