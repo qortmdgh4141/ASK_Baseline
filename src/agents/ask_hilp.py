@@ -131,8 +131,10 @@ def compute_high_actor_loss(agent, batch, network_params):
     if agent.config['correction_value']:
         #devide
         diff_v1, diff_v2 = agent.network(observations, high_targets, method='hilp_value')
-        diff_v_ = jnp.minimum(diff_v1, diff_v2)
+        diff_v_ = jnp.abs(jnp.minimum(diff_v1, diff_v2))
         adv = (nv - v + diff_v_)/2
+        
+        diff_v = diff_v_.mean()
         # # min
         # diff_v1, diff_v2 = agent.network(observations, high_targets, method='value')
         # adv_ = nv - v
@@ -141,7 +143,7 @@ def compute_high_actor_loss(agent, batch, network_params):
         # adv = jnp.abs(adv_ / diff_v) * adv_
     else:
         adv = nv - v
-        
+        diff_v=0
 
     exp_a = jnp.exp(adv * agent.config['high_temperature'])
     exp_a = jnp.minimum(exp_a, 100.0)
@@ -205,6 +207,8 @@ def compute_high_actor_loss(agent, batch, network_params):
         'kl_loss' : kl_loss,
         'actor_loss_only' : actor_loss_only,
         'mse_loss' : mse_loss,
+        'diff_v': diff_v,
+        
     }
 
 def compute_value_loss(agent, batch, network_params):
@@ -308,14 +312,14 @@ def hilp_compute_value_loss(agent, batch, network_params):
             (obs_target_v1, obs_target_v2) = agent.network(batch['observations'], batch['low_goals'], method='hilp_value', params=network_params)
             obs_target_v = jnp.minimum(obs_target_v1, obs_target_v2)
             # obs -> next_obs : value
-            (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
-            obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
+            # (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
+            # obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
             # next -> tareget : value
             (next_obs_target_v1, next_obs_target_v2) = agent.network(batch['next_observations'], batch['low_goals'], method='hilp_target_value')
             next_obs_target_v = jnp.minimum(next_obs_target_v1, next_obs_target_v2)
             
             #first
-            n_step_loss = jnp.mean((obs_target_v  - (obs_next_obs_v + next_obs_target_v))**2)
+            n_step_loss = jnp.mean((obs_target_v  - (batch['rewards'] + next_obs_target_v))**2)
             
         elif agent.config['distance'] =='second':
             # obs -> target : value
@@ -325,8 +329,8 @@ def hilp_compute_value_loss(agent, batch, network_params):
             (target_goal_v1, target_goal_v2) = agent.network(batch['low_goals'], batch['goals'], method='hilp_target_value', params=network_params)
             target_goal_v = jnp.minimum(target_goal_v1, target_goal_v2)
             # obs -> next_obs : value
-            (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
-            obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
+            # (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
+            # obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
             # next -> target : value
             # (next_obs_target_v1, next_obs_target_v2) = agent.network(batch['next_observations'], batch['low_goals'], method='hilp_target_value')
             # next_obs_target_v = jnp.minimum(next_obs_target_v1, next_obs_target_v2)
@@ -334,8 +338,10 @@ def hilp_compute_value_loss(agent, batch, network_params):
             # second
             # n_step_loss_1 = jnp.mean((obs_target_v  - (obs_next_obs_v + next_obs_target_v))**2)
             # n_step_loss_2 = jnp.mean(((obs_target_v + target_goal_v) - (obs_next_obs_v + next_v))**2)
-            n_step_loss = jnp.mean(((obs_target_v + target_goal_v) - (obs_next_obs_v + next_v))**2)
+            n_step_loss = jnp.mean(((obs_target_v + target_goal_v) - (batch['rewards'] + next_v))**2)
             # n_step_loss = n_step_loss_1 + n_step_loss_2
+        else:
+            raise NotImplementedError
     
         value_loss = value_loss1 + value_loss2 + n_step_loss
     else:
@@ -388,7 +394,7 @@ class JointTrainAgent(iql.IQLAgent):
         def loss_fn(network_params):
             info = {}
             if hilp_update:
-                value_update, actor_update, high_actor_update = True, False, False
+                value_update, actor_update, high_actor_update = False, False, False
             else:
                 value_update, actor_update, high_actor_update = False, True, True
                 

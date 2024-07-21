@@ -428,40 +428,52 @@ def get_transition_index_ant(agent, dataset, flags):
         values[mini_batch*i:mini_batch*(i+1)] = value_fn(observations=dataset['observations'][mini_batch*i:mini_batch*(i+1)], goals=dataset['goal_info'][mini_batch*i:mini_batch*(i+1)])[0]
     
             
-    rewards = dataset['rewards'].reshape(999,1000)
-    dones_index = np.argmax(rewards, axis=1)
-    dones_index[dones_index==0] = 999
+    # rewards = dataset['rewards'].reshape(999,1000)
+    # dones_index = np.argmax(rewards, axis=1)
+    # dones_index[dones_index==0] = 999
     
     reshape_values = values.reshape(999, 1000)
     tdd_ = reshape_values[:, 1:] - reshape_values[:, :-1]
     tdd = jnp.pad(tdd_, ((0, 0), (1, 0)), constant_values=tdd_[tdd_>0].mean())
-    dones_indexes = np.ones_like(reshape_values, dtype=bool)
+    # dones_indexes = np.ones_like(reshape_values, dtype=bool)
  
-    for i, t in enumerate(tdd):
-        dones_indexes[i,dones_index[i]:] = False
-    td_flatten = np.array(tdd, dtype=np.float32)
-    tdd = tdd.at[dones_indexes==False].set(0)
-    hlip_filtered_index = np.where(tdd > tdd[tdd>0].mean(), True, False)
+    # for i, t in enumerate(tdd):
+    #     dones_indexes[i,dones_index[i]:] = False
+    td_flatten = np.array(tdd, dtype=np.float32).reshape(-1)
+    # tdd = tdd.at[dones_indexes==False].set(0)
+    # hlip_filtered_index = np.where(tdd > tdd[tdd>0].mean(), True, False)
     
-    # Q1 = np.percentile(tdd, 25)
-    # Q3 = np.percentile(tdd, 75)
-    # IQR = Q3 - Q1
-    # lower_bound = Q1 - 1.5 * IQR
-    # upper_bound = Q3 + 1.5 * IQR
-
-    # index = np.where(tdd >= lower_bound, True, False) & np.where(tdd <= upper_bound, True, False)
+    index = np.zeros_like(reshape_values, dtype=bool)
+    max_values = reshape_values[:,0]
+    for i, t in enumerate(reshape_values[:,1:]):
+        better_idx = np.where(max_values < reshape_values[:,i+1], True, False)
+        max_values[better_idx] = reshape_values[better_idx, i+1]
+        
+        # positive_idx = np.where(reshape_values[:,i+1]-reshape_values[:,i] >0, True, False)
+        # idx = better_idx * positive_idx
+        index[better_idx,i+1] = True
+    
+    hlip_filtered_index = index.reshape(-1)
     
     # tdd = tdd[index]
-    filtered_transition_index = hlip_filtered_index * dones_indexes
+    # filtered_transition_index = hlip_filtered_index * dones_indexes
     # hlip_filtered_index = hlip_filtered_index * dones_indexes
     
     
     # filtered_transition_index = hlip_filtered_index * dones_indexes * index
-    tdd = tdd[hlip_filtered_index]
-    print(f'before filtered tdds {tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {hlip_filtered_index.mean()=}, {td_flatten[hlip_filtered_index].mean()=}')
-    print(f'after filtered tdds {td_flatten[0,0]=}, {td_flatten.min()=}, {td_flatten.max()=}, {hlip_filtered_index.mean()*100=:.2f} % used dataset, {td_flatten[hlip_filtered_index].mean()=}')
+    # tdd = tdd[hlip_filtered_index]
+    # print(f'before filtered tdds {tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {hlip_filtered_index.mean()=}, {td_flatten[hlip_filtered_index].mean()=}')
+    # print(f'after filtered tdds {td_flatten[0,0]=}, {td_flatten.min()=}, {td_flatten.max()=}, {hlip_filtered_index.mean()*100=:.2f} % used dataset, {td_flatten[hlip_filtered_index].mean()=}')
+    print(f'after filtered tdds {td_flatten[0]=}, {td_flatten.min()=}, {td_flatten.max()=}, {hlip_filtered_index.mean()*100=:.2f} % used dataset, {td_flatten[hlip_filtered_index].mean()=}')
+    print(f'better filtered tdds {td_flatten[0]=}, {td_flatten[hlip_filtered_index].min()=}, {td_flatten[hlip_filtered_index].max()=}, {hlip_filtered_index.mean()*100=:.2f} % used dataset, {td_flatten[hlip_filtered_index].mean()=}')
     
-    return filtered_transition_index.reshape(-1).astype(bool), hlip_filtered_index.reshape(-1).astype(bool), dones_indexes.reshape(-1)
+    obs_index = np.random.choice(len(dataset['observations']), size=hlip_filtered_index.sum())
+    plot_obs(dataset['observations'][obs_index], path='all')
+    plot_obs(dataset['observations'][hlip_filtered_index.reshape(-1).astype(bool)], path='filtered')
+    
+    
+    # return filtered_transition_index.reshape(-1).astype(bool), hlip_filtered_index.reshape(-1).astype(bool), dones_indexes.reshape(-1)
+    return hlip_filtered_index.reshape(-1).astype(bool), hlip_filtered_index.reshape(-1).astype(bool), None
 
 def get_transition_index_kitchen(agent, dataset, flags):
     import jax
@@ -472,44 +484,76 @@ def get_transition_index_kitchen(agent, dataset, flags):
     
     for i in range(size+1):
         values[mini_batch*i:mini_batch*(i+1)] = value_fn(observations=dataset['observations'][mini_batch*i:mini_batch*(i+1)], goals=dataset['goal_info'][mini_batch*i:mini_batch*(i+1)])[0]
-
-    
-    
+    #####################################################################################
     # tdd_ = values[1:] - values[:-1]
-    # index = dataset['dones_float']==1
-    # mean_tdd = tdd_[tdd_>0].mean()
-    # tdd_[index[:-1]] = mean_tdd
-    # tdd = np.concatenate(([mean_tdd], tdd_))
-    # transition_index = tdd > tdd.mean()
-    # print(f'{tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {transition_index.mean()=},, {tdd[transition_index].mean()=}')
+    # first_tdd = jnp.array([tdd_[tdd_>0].mean()])
+    # tdd = jnp.concatenate([first_tdd, tdd_],axis=0)
+    # hlip_filtered_index = np.where(tdd > tdd[tdd>0].mean(), True, False)
+    # dones_indexes = np.where(dataset['dones_float']==1, True, False)
+    
+    # hlip_filtered_index = hlip_filtered_index.reshape(-1).astype(bool)
+    
+    # print(f'{tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {hlip_filtered_index.mean()=},, {tdd[hlip_filtered_index].mean()=}')
+
+    # return hlip_filtered_index, hlip_filtered_index, dones_indexes
+    
+    #####################################################################################
+    max_values = values[0]
+    hlip_filtered_index = np.zeros_like(values, dtype=bool)
+    for i, v in enumerate(values[:-1]):
+        if v > max_values:
+            max_values = v
+            hlip_filtered_index[i] = True
+        if dataset['dones_float'][i]:
+            max_values = values[i+1]
+    
+
+
     
     tdd_ = values[1:] - values[:-1]
     first_tdd = jnp.array([tdd_[tdd_>0].mean()])
-    tdd = jnp.concatenate([first_tdd, tdd_],axis=0)
-    hlip_filtered_index = np.where(tdd > tdd[tdd>0].mean(), True, False)
-    dones_indexes = np.where(dataset['dones_float']==1, True, False)
+    td_flatten = jnp.concatenate([first_tdd, tdd_],axis=0)
+    # hlip_filtered_index = np.where(td_flatten > td_flatten[td_flatten>0].mean(), True, False)
+ 
+    # index = np.zeros_like(values, dtype=bool)
+    # max_values = values[:,0]
+    # for i, t in enumerate(values[:,1:]):
+    #     better_idx = np.where(max_values < values[:,i+1], True, False)
+    #     max_values[better_idx] = values[better_idx, i+1]
+    #     index[better_idx,i+1] = True
     
-    hlip_filtered_index = hlip_filtered_index.reshape(-1).astype(bool)
-    
-    print(f'{tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {hlip_filtered_index.mean()=},, {tdd[hlip_filtered_index].mean()=}')
-    
-    
-    return hlip_filtered_index, hlip_filtered_index, dones_indexes
+    # hlip_filtered_index = index.reshape(-1)
 
-def plot_obs(observations, s=1, xlim=55, ylim=45):
+    print(f'after filtered tdds {td_flatten[0]=}, {td_flatten.min()=}, {td_flatten.max()=}, {hlip_filtered_index.mean()*100=:.2f} % used dataset, {td_flatten[hlip_filtered_index].mean()=}')
+    print(f'better filtered tdds {td_flatten[0]=}, {td_flatten[hlip_filtered_index].min()=}, {td_flatten[hlip_filtered_index].max()=}, {hlip_filtered_index.mean()*100=:.2f} % used dataset, {td_flatten[hlip_filtered_index].mean()=}')
     
+    return hlip_filtered_index, hlip_filtered_index, None
+    
+    
+
+def plot_obs(observations, s=1, xlim=55, ylim=40, path=None ,c=None):
+    if path is None:
+        path = 0
+        
     x, y = observations[:, 0], observations[:, 1]
     import matplotlib.pyplot as plt
     
     fig = plt.figure(figsize=(10,8))
     print(f'{x.shape=}, {y.shape}')
-    plt.scatter(x,y, s=s)
-    plt.xlim([0,xlim])
-    plt.ylim([0,ylim])
+    if c is not None:
+        cmap = plt.cm.bwr
+        plt.scatter(x,y, s=s, cmap=cmap, c=c)
+        plt.colorbar()
+    else:
+        plt.scatter(x,y, s=s)
+    plt.xlim([-2,xlim])
+    plt.ylim([-2,ylim])
     import time
     g_start_time = time.strftime('%m-%d_%H-%M')
     import os
-    # os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/plot_ant/{g_start_time}', exist_ok=True)
-    plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/plot_ant/{g_start_time}_obs.png', format="PNG", dpi=300)
+    dir_pth = os.path.dirname(os.path.dirname(__file__))
+    os.makedirs(os.path.join(dir_pth , f'plot_ant/{g_start_time}'), exist_ok=True)
+    plt.savefig(os.path.join(dir_pth , f'plot_ant/{g_start_time}/{path}_obs.png'), format="PNG", dpi=300)
+    plt.close()
     
     

@@ -443,9 +443,9 @@ def main(_):
     last_time = time.time()
     
     
-    if True:
+    if False:
         if 'antmaze' in FLAGS.env_name:
-            load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/ant_ultra_diverse_d.98_dim_64_second_hilp.pkl'
+            load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/ant_ultra_diverse_d.99_dim_256_f_h_t_1_eval.pkl'
         elif 'kitchen' in FLAGS.env_name:
             load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/kitchen_mixed_hilp.pkl'
         elif 'calvin' in FLAGS.env_name:
@@ -456,7 +456,7 @@ def main(_):
         load_file = None
     
     if 'ask' in FLAGS.algo_name:
-        if load_file is not None:
+        if load_file is None:
             hilp_train_steps = 1*10**5 + 1
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
@@ -484,6 +484,7 @@ def main(_):
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)  
         else: 
+            hilp_train_steps = 0
             with open(load_file, "rb") as f:
                 loaded_dict = pickle.load(f)
             agent = flax.serialization.from_state_dict(agent, loaded_dict['agent'])

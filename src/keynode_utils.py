@@ -230,39 +230,62 @@ class KeyNode(object):
         
         # temp distance 계산 - observation 과 subgoal 간 거리
         temp_distance = jnp.linalg.norm(hilp_observation - hilp_subgoal).mean()
-        # subgoal과 rep key node간 거리 계산
+        # observation과 rep key node간 거리 계산
+        # keynode_distance = jnp.linalg.norm(self.rep_centroids - hilp_observation, axis=-1)
+        # subgoal 과 rep key node간 거리 계산
         keynode_distance = jnp.linalg.norm(self.rep_centroids - hilp_subgoal, axis=-1)
-        
+        # observation과 rep key node간 거리 계산
+        keynode_distance_obs = jnp.linalg.norm(self.rep_centroids - hilp_observation, axis=-1)
+        ##############################################################################
         # cos similarity 계산
         # 원점 기준 계산
-        normalized_subgoal = hilp_subgoal / jnp.linalg.norm(hilp_subgoal)
-        cosine_similarity = jnp.dot(self.normalized_rep_centroids, normalized_subgoal)
+        # normalized_subgoal = hilp_subgoal / jnp.linalg.norm(hilp_subgoal)
+        # cosine_similarity = jnp.dot(self.normalized_rep_centroids, normalized_subgoal)
         
         # observations 기준 계산
         # normalized_subgoal = (hilp_subgoal - hilp_observation) / jnp.linalg.norm(hilp_subgoal - hilp_observation)
-        # normalized_observations = hilp_observation / jnp.linalg.norm(hilp_observation)
         # normalized_rep_centroids = (self.rep_centroids - hilp_observation) / jnp.linalg.norm((self.rep_centroids - hilp_observation))
         # cosine_similarity = jnp.dot(normalized_rep_centroids, normalized_subgoal.T)
         
         
-        # temp distance 2배 이내의 key node 후보 탐색
-        max_distance = jax.lax.cond(temp_distance * 2 > keynode_distance.min(),
-                            lambda _: temp_distance * 2,
-                            lambda _: keynode_distance.min() * 2,
-                            operand=None)
-        # max_distance = temp_distance * 2 if temp_distance * 2 > keynode_distance.min() else keynode_distance.min() * 2
+        # # temp distance 2배 이내의 key node 후보 탐색
+        # max_distance = jax.lax.cond(temp_distance * 1.2 > keynode_distance.min(),
+        #                     lambda _: temp_distance * 1.2,
+        #                     lambda _: keynode_distance.min() * 1.2,
+        #                     operand=None)
         
-        # bouneded_index = jnp.where(keynode_distance < max_distance, True, False)
-        # cosine_similarity = jnp.where(keynode_distance < max_distance, cosine_similarity, jnp.zeros_like(keynode_distance))
-        cosine_similarity = jnp.where(keynode_distance <= max_distance, cosine_similarity, 0)
-        # cosine_similarity = jnp.where(keynode_distance < temp_distance*0.5, jnp.zeros_like(keynode_distance), cosine_similarity)
-
-        keynode_index = jnp.argmax(cosine_similarity)
-        # keynode_index = jnp.unravel_index(keynode_index_, cosine_similarity.shape) 
+        # min_distance = jax.lax.cond(temp_distance * 0.5 > keynode_distance.min(),
+        #                             lambda _: temp_distance * 0.5,
+        #                             lambda _: keynode_distance.min(),
+        #                             operand=None)
         
+        
+        # cosine_similarity = jnp.where(keynode_distance < max_distance, cosine_similarity, 0)
+        # cosine_similarity = jnp.where(keynode_distance < min_distance, 0, cosine_similarity)
+        # keynode_index = jnp.argmax(cosine_similarity)
+        ##############################################################################
+        # if cosine_similarity < 0.8:
+        #     cur_obs_key_node = None
+        #     cur_obs_latent_key_node = hilp_subgoal
+        #     return temp_distance, cur_obs_latent_key_node, hilp_subgoal, cur_obs_key_node
         # # euclidean distance
         # distance = jnp.linalg.norm(self.centroids - input_obs, axis=1)
-        # index = jnp.argmin(distance)
+        
+        min_distance = jax.lax.cond(temp_distance * 0.5 > keynode_distance_obs.min(),
+                            lambda _: temp_distance * 0.5,
+                            lambda _: keynode_distance_obs.min(),
+                            operand=None)
+        # obs 와 너무 가까운 key node는 제거
+        keynode_distance = jnp.where(keynode_distance_obs > min_distance, keynode_distance, 1e6)
+        
+        # subgoal 과 너무 먼 key node는 제거
+        max_distance = jax.lax.cond(temp_distance * 0.5 > keynode_distance.min(),
+                            lambda _: temp_distance * 0.5,
+                            lambda _: keynode_distance.min() * 1.2,
+                            operand=None)
+        keynode_distance = jnp.where(keynode_distance < max_distance, keynode_distance, 1e6)
+        
+        keynode_index = jnp.argmin(keynode_distance)
         
         # cosine_similarity = jnp.dot(self.normalized_rep_centroids, normalized_input_obs.T)
         # index = jnp.argmax(cosine_similarity)

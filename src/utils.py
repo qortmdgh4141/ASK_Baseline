@@ -192,9 +192,9 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
         # index = np.random.choice(obs.shape[0], size=1024)
         if transition_index is not None:
             filtered_transition_index, hlip_filtered_index, dones_indexes = transition_index
-            random_obs_sub = obs[dones_indexes][np.random.choice(obs[dones_indexes].shape[0], size=filtered_transition_index.sum())]
+            random_obs_sub = obs[np.random.choice(obs[filtered_transition_index].shape[0], size=filtered_transition_index.sum())]
             hilp_filtered_obs_sub = obs[filtered_transition_index]
-            s=0.01
+            s=0.1
         
         else:
             filtered_transition_index = transition_index = np.random.choice(obs.shape[0], size=1024)
@@ -226,7 +226,7 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     save_path = os.path.join(dir_name, 'value_img', g_start_time)
     os.makedirs(save_path, exist_ok=True)
     plt.savefig(os.path.join(save_path, f'sampled_obs_img_{i}.png'), format="PNG", dpi=300)
-    plt.close()
+    # plt.close()
     
     # os.makedirs(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}', exist_ok=True)
     # plt.savefig(f'/home/qortmdgh4141/disk/HIQL_Team_Project/TG/value_img/{g_start_time}/value_img_{i}.png', format="PNG", dpi=300)
@@ -318,6 +318,7 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
         cbar = plt.colorbar(sc4,  cax=cbar_ax, label='probs')
         
         plt.savefig(os.path.join(save_path, 'identity_img_{i}.png'), format="PNG", dpi=300)
+        plt.close()
         
         buf = io.BytesIO()
         plt.savefig(buf, format='png')

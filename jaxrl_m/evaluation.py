@@ -98,7 +98,8 @@ def evaluate_with_trajectories(
             
         while not done:
                
-            if h_step == interval or dist < init_dist * 0.5:
+            # if h_step == interval or dist < init_dist * 0.5:
+            if h_step == interval:
                 cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=0)
                 if FLAGS.high_action_in_hilp:
                     cur_obs_goal = plot_subgoal = cur_obs_subgoal
@@ -111,10 +112,12 @@ def evaluate_with_trajectories(
                         cur_obs_goal = cur_obs_latent_key_node
                     else:
                         distance, _, hilp_subgoal, cur_obs_key_node  = find_key_node(hilp_fn(observations=jnp.vstack([observation, cur_obs_subgoal])).reshape(-1))
+                        if cur_obs_key_node is None:
+                            cur_obs_key_node = cur_obs_subgoal
                         cur_obs_goal = cur_obs_key_node
                         
-                if FLAGS.relative_dist_in_eval_On:
-                    init_dist = np.linalg.norm(cur_obs_subgoal - observation)
+                # if FLAGS.relative_dist_in_eval_On:
+                #     init_dist = np.linalg.norm(cur_obs_subgoal - observation)
                 
 
                 # if config['use_keynode_in_eval_On']:
