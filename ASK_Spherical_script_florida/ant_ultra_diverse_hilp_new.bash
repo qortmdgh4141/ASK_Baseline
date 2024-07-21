@@ -11,7 +11,7 @@ main_py_path="/home/qortmdgh4141/disk/HIQL_Team_Project/TG/main.py" # 부모 디
 current_time=$(date "+%m-%d_%H:%M")
 project="hilp-ant-ultra"
 
-extra_name="d.99_dim_64_f_h_t_1_eval_l2"
+extra_name="d.99_dim_64_f_h_t_1_eval_l2_f"
 
 gpu="1"
 start=0
@@ -19,7 +19,7 @@ end_=3
 
 use_rep=''                     # ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]
 kl_loss=0
-final_goal=0
+final_goal=1
 mse_loss=0.1
 correction_value=0
 high_action_in_hilp=0

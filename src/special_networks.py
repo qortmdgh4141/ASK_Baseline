@@ -188,7 +188,7 @@ class HierarchicalActorCritic(nn.Module):
             goals = get_rep(self.encoders['value_goal'], targets=goals, bases=observations)
         return self.networks['target_value'](observations, goals, **kwargs)
 
-    def actor(self, observations, goals, low_dim_goals=False, state_rep_grad=True, goal_rep_grad=True, **kwargs):
+    def actor(self, observations, goals, subgoals=None, low_dim_goals=False, state_rep_grad=True, goal_rep_grad=True, **kwargs):
     
         goal_reps = goals
         if low_dim_goals:
@@ -275,7 +275,7 @@ class HierarchicalActorCritic(nn.Module):
                 'hilp_target_value': self.hilp_target_value(observations, goals),
                 'value': self.value(observations, goals),
                 'target_value': self.target_value(observations, goals),
-                'actor': self.actor(observations, subgoals, goals),
+                'actor': self.actor(observations, goals, subgoals=subgoals),
                 'high_actor': self.high_actor(observations, goals),
             }
         elif self.flag.high_action_in_hilp:

@@ -137,7 +137,10 @@ def evaluate_with_trajectories(
             dists.append(dist)
         
     
-            action = policy_fn(observations=observation, goals=cur_obs_goal, low_dim_goals=True, temperature=eval_temperature)
+            if FLAGS.final_goal:
+                action = policy_fn(observations=observation, goals=obs_goal, subgoals=cur_obs_goal, low_dim_goals=True, temperature=eval_temperature)
+            else:
+                action = policy_fn(observations=observation, goals=cur_obs_goal, low_dim_goals=True, temperature=eval_temperature)
             
             if 'antmaze' in env_name:
                 next_observation, r, done, info = env.step(action)

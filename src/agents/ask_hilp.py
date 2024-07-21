@@ -69,7 +69,7 @@ def compute_actor_loss(agent, batch, network_params):
 
     if agent.config['final_goal']:
         # [obs, subgoal, final goal] input
-        dist = agent.network(observations, low_goals, final_goal, state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
+        dist = agent.network(observations, final_goal, low_goals, state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
     else:
         # [obs, subgoal] input
         dist = agent.network(observations, low_goals, state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
@@ -480,12 +480,16 @@ class JointTrainAgent(iql.IQLAgent):
     def sample_actions(agent,
                        observations: np.ndarray,
                        goals: np.ndarray,
+                       subgoals: Any = None,
                        *,
                        low_dim_goals: bool = False,
                        seed: PRNGKey,
                        temperature: float = 1.0,
                        num_samples: int = None) -> jnp.ndarray:
-        dist = agent.network(observations, goals, low_dim_goals=low_dim_goals, temperature=temperature, method='actor')
+        if subgoals is not None:
+            dist = agent.network(observations, goals, subgoals=subgoals, low_dim_goals=low_dim_goals, temperature=temperature, method='actor')
+        else:
+            dist = agent.network(observations, goals, low_dim_goals=low_dim_goals, temperature=temperature, method='actor')
         if num_samples is None:
             actions = dist.sample(seed=seed)
         else:
