@@ -226,7 +226,7 @@ class KeyNode(object):
     
     def find_node_pos(self, input_obs):
         input_obs = input_obs.reshape(-1, self.flags.hilp_skill_dim)
-        hilp_observation, hilp_subgoal = input_obs[0], input_obs[1] 
+        hilp_observation, hilp_subgoal = input_obs[1], input_obs[0] 
         
         # temp distance 계산 - observation 과 subgoal 간 거리
         temp_distance = jnp.linalg.norm(hilp_observation - hilp_subgoal).mean()

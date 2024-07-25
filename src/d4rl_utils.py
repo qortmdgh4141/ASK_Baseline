@@ -80,6 +80,14 @@ def get_dataset(env: gym.Env,
         #     returns, episode_index = calc_return_to_go_kitchen(dataset, flag)
         # elif 'calvin' in env_name:
         #     returns, episode_index = calc_return_to_go_calvin(dataset, flag)
+        
+        config = {'observation_min':dataset['observations'].min(axis=0),
+                  'observation_max':dataset['observations'].max(axis=0),
+                  'action_max':dataset['actions'].max(axis=0),
+                  'action_min':dataset['actions'].min(axis=0),
+                  }
+        
+        
         return Dataset.create(
             observations=observations,
             actions=dataset['actions'].astype(np.float32),
@@ -89,7 +97,7 @@ def get_dataset(env: gym.Env,
             next_observations=next_observations,
             # returns = returns,
             goal_info = goal_info,
-            )
+            ), config
         # episode_index
             
 def relabel_ant(env, env_name, dataset, flags):

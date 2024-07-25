@@ -91,6 +91,7 @@ class GCSDataset(GCDataset):
     way_steps: int = None
     high_p_randomgoal: float = 0.
     keynode_ratio: float = 0.5
+    high_p_relable : float = 0.
     # find_key_node_in_dataset : Any = None
     
     @staticmethod
@@ -146,6 +147,19 @@ class GCSDataset(GCDataset):
             batch['high_goals'] = jax.tree_map(lambda arr: arr[high_goal_idx], self.dataset['observations'])
             
             batch['high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['observations'])
+            
+            # goal_indx = self.sample_goals(indx)
+            # high_success = (high_target_idx == high_goal_idx)
+            
+            # additional relable for high level
+            relable = (np.random.rand(batch_size) < self.high_p_relable)
+            high_goal_idx = np.where(relable, high_traj_target_indx, high_random_target_indx)
+            
+            high_success = (high_target_idx == high_goal_idx)
+            
+            batch['high_rewards'] = high_success.astype(float) * self.reward_scale + self.reward_shift
+            batch['high_masks'] = (1.0 - high_success.astype(float))
+            
             
             if 'key_node' in self.dataset.keys():
                 batch['key_node'] = self.dataset['key_node'][indx]

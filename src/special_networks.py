@@ -100,6 +100,38 @@ class MonolithicVF(nn.Module):
             }
         return v1, v2
 
+class MonolithicQF(nn.Module):
+    hidden_dims: tuple = (256, 256)
+    readout_size: tuple = (256,)
+    use_layer_norm: bool = True
+    # rep_dim: int = None
+    obs_rep: int = 0
+
+    def setup(self) -> None:
+        repr_class = LayerNormRepresentation if self.use_layer_norm else Representation
+        self.q_net = repr_class((*self.hidden_dims, 1), activate_final=False)
+
+    def __call__(self, observations, actions, goals=None, info=False):
+        phi = observations
+        pi = actions
+        psi = goals
+
+        q1, q2 = self.q_net(jnp.concatenate([phi, pi, psi], axis=-1)).squeeze(-1)
+
+        if info:
+            return {
+                'q': (q1 + q2) / 2,
+            }
+        return q1, q2
+
+class Scalar(nn.Module):
+
+    def setup(self):
+        self.value = self.param('value', nn.initializers.zeros, 1)
+        
+    def __call__(self):
+        return self.value
+    
 class HILP_GoalConditionedPhiValue(nn.Module):
     hidden_dims: tuple = (256, 256) # (512, 512, 512)
     readout_size: tuple = (256,)
@@ -297,4 +329,180 @@ class HierarchicalActorCritic(nn.Module):
                 'high_actor': self.high_actor(observations, goals),
             }
             
+        return rets
+
+
+class HierarchicalActorCritic_HCQL(nn.Module):
+    encoders: Dict[str, nn.Module]
+    networks: Dict[str, nn.Module]
+    flag: Any = None
+# ---------------------------------------------------------------------------------------------------------------    
+    # HCQL
+    def qf(self, observations, actions, goals, **kwargs):
+        # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+        state_reps = get_rep(self.encoders['qf_state'], targets=observations)
+        goal_reps = get_rep(self.encoders['qf_goal'], targets=goals, bases=observations)
+        return self.networks['qf'](state_reps, actions, goal_reps, **kwargs)
+
+    def target_qf(self, observations, actions, goals, **kwargs):
+        # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+        state_reps = get_rep(self.encoders['qf_state'], targets=observations)
+        goal_reps = get_rep(self.encoders['qf_goal'], targets=goals, bases=observations)
+        return self.networks['target_qf'](state_reps, actions, goal_reps, **kwargs)
+    
+    # hierarcy qf function
+    def high_qf(self, observations, actions, goals, **kwargs):
+        # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+        state_rep = get_rep(self.encoders['high_qf_state'], targets=observations)
+        goal_reps = get_rep(self.encoders['high_qf_goal'], targets=goals, bases=observations)
+        return self.networks['high_qf'](state_rep, actions, goal_reps, **kwargs)
+
+    def high_target_qf(self, observations, actions, goals, **kwargs):
+        # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
+        state_rep = get_rep(self.encoders['high_qf_state'], targets=observations)
+        goal_reps = get_rep(self.encoders['high_qf_goal'], targets=goals, bases=observations)
+        return self.networks['high_target_qf'](state_rep, actions, goal_reps, **kwargs)
+
+    def actor(self, observations, goals, low_dim_goals=False, state_rep_grad=True, goal_rep_grad=True, **kwargs):
+        
+        # assert goals.shape[-1] == 3, 'goals dim error'
+        
+        state_reps = get_rep(self.encoders['policy_state'], targets=observations)
+        if not state_rep_grad:
+            state_reps = jax.lax.stop_gradient(state_reps)
+        
+        if low_dim_goals:
+            goal_reps = goals
+        else:
+            # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"] :
+            goal_reps = get_rep(self.encoders['qf_goal'], targets=goals, bases=observations)
+            if not goal_rep_grad: # goal_rep_grad=False: low actor때는 업데이트 안함.
+                goal_reps = jax.lax.stop_gradient(goal_reps)
+        return self.networks['actor'](jnp.concatenate([state_reps, goal_reps], axis=-1), **kwargs)
+
+    def high_actor(self, observations, goals, state_rep_grad=True, goal_rep_grad=True, **kwargs):
+        state_reps = get_rep(self.encoders['high_policy_state'], targets=observations)
+        if not state_rep_grad:
+            state_reps = jax.lax.stop_gradient(state_reps)
+        
+        goal_reps = get_rep(self.encoders['high_policy_goal'], targets=goals, bases=observations)
+        if not goal_rep_grad:
+            goal_reps = jax.lax.stop_gradient(goal_reps)
+        
+        return self.networks['high_actor'](jnp.concatenate([state_reps, goal_reps], axis=-1), **kwargs)
+
+    def log_alpha(self, **kwargs):
+        return self.networks['log_alpha']()[0]
+
+    def high_log_alpha(self, **kwargs):
+        return self.networks['high_log_alpha']()[0]
+
+    def log_alpha_prime(self, **kwargs):
+        return self.networks['log_alpha_prime']()[0]
+
+    def high_log_alpha_prime(self, **kwargs):
+        return self.networks['high_log_alpha_prime']()[0]
+    
+    def qf_goal_encoder(self, targets, bases, **kwargs):
+        return get_rep(self.encoders['qf_goal'], targets=targets, bases=bases)
+    
+    def high_qf_goal_encoder(self, targets, bases, **kwargs):
+        return get_rep(self.encoders['high_qf_goal'], targets=targets, bases=bases)
+
+    def policy_goal_encoder(self, targets, goals, **kwargs):
+        assert not self.use_waypoints
+        return get_rep(self.encoders['policy_goal'], targets=targets, bases=goals)
+# ---------------------------------------------------------------------------------------------------------------
+    # HILP
+    def hilp_value(self, observations, goals=None, **kwargs):
+        return self.networks['hilp_value'](observations, goals, **kwargs)
+
+    def hilp_target_value(self, observations, goals=None, **kwargs):
+        return self.networks['hilp_target_value'](observations, goals, **kwargs)
+    
+    def hilp_phi(self, observations):
+        return self.networks['hilp_value'].get_phi(observations)
+# ---------------------------------------------------------------------------------------------------------------
+    # VAE
+    def vae_state_encoder(self, targets, **kwargs):
+        return get_rep(self.encoders['vae_state_encoder'], targets=targets)
+    
+    def vae_state_decoder(self, targets, **kwargs):
+        return get_rep(self.encoders['vae_state_decoder'], targets=targets)
+# ---------------------------------------------------------------------------------------------------------------
+    # 네트워크 초기화
+    def __call__(self, observations=None, actions=None, goals=None, latent=None):        
+        # if self.flag.use_rep == "hiql_goal_encoder":
+        #     rets = {
+        #         'high_qf_goal_encoder' : self.high_qf_goal_encoder(observations, goals), 
+        #         'qf_goal_encoder' : self.qf_goal_encoder(observations, goals), 
+        #         'qf': self.qf(observations, goals),
+        #         'target_qf': self.target_qf(observations, goals),
+        #         'actor': self.actor(observations, goals),
+        #         'high_actor': self.high_actor(observations, goals),
+        #     }
+        # elif self.flag.use_rep =="hilp_subgoal_encoder":
+        #     rets = {            
+        #         'hilp_value': self.hilp_value(observations, goals), 
+        #         'hilp_target_value': self.hilp_target_value(observations, goals),
+        #         'value': self.value(observations, goals[:, :self.flag.hilp_skill_dim]),
+        #         'target_value': self.target_value(observations, goals[:, :self.flag.hilp_skill_dim]),
+        #         'actor': self.actor(observations, goals[:, :self.flag.hilp_skill_dim]),
+        #         'high_actor': self.high_actor(observations, goals[:, :self.flag.hilp_skill_dim]),
+        #     }
+        # elif self.flag.use_rep == "hilp_encoder":
+        #     rets = {            
+        #         'hilp_value': self.hilp_value(observations, goals), 
+        #         'hilp_target_value': self.hilp_target_value(observations, goals),
+        #         'value': self.value(observations[:, :self.flag.hilp_skill_dim], goals[:, :self.flag.hilp_skill_dim]),
+        #         'target_value': self.target_value(observations[:, :self.flag.hilp_skill_dim], goals[:, :self.flag.hilp_skill_dim]),
+        #         'actor': self.actor(observations[:, :self.flag.hilp_skill_dim], goals[:, :self.flag.hilp_skill_dim]),
+        #         'high_actor': self.high_actor(observations[:, :self.flag.hilp_skill_dim], goals[:, :self.flag.hilp_skill_dim]),
+        #     }
+        # elif self.flag.use_rep == "vae_encoder":
+        #     base_observations = observations
+        #     observations = observations[:, :self.flag.vae_encoder_dim]
+        #     goals = goals[:, :self.flag.vae_encoder_dim]
+        #     latent = observations[:, :self.flag.vae_encoder_dim]
+        #     rets = {
+        #         'vae_state_encoder' : self.vae_state_encoder(base_observations), 
+        #         'vae_state_decoder' : self.vae_state_decoder(latent), 
+        #         'value_goal' : self.value_goal_encoder(observations, goals), 
+        #         'value': self.value(observations, goals),
+        #         'target_value': self.target_value(observations, goals),
+        #         'actor': self.actor(observations, goals),
+        #         'high_actor': self.high_actor(observations, goals),
+        #     }
+        
+        # elif 'Fetch' in self.flag.env_name:
+        #     subgoal = goals if self.flag.small_subgoal_space else observations
+        #     rets = {
+        #         'qf': self.qf(observations, actions, goals),
+        #         'target_qf': self.target_qf(observations, actions, goals),
+        #         'actor': self.actor(observations, goals),
+        #         'high_actor': self.high_actor(observations, goals),
+        #         'log_alpha': self.log_alpha()
+        #     }
+        
+        # else:
+        rets = {
+            # 'vae_state_encoder' : self.vae_state_encoder(base_observations), 
+            # 'vae_state_decoder' : self.vae_state_decoder(latent), 
+            'high_qf' : self.high_qf(observations, observations, goals), 
+            'high_target_qf' : self.high_target_qf(observations, observations, goals), 
+            'qf': self.qf(observations, actions, goals),
+            'target_qf': self.target_qf(observations, actions, goals),
+            'actor': self.actor(observations, goals),
+            'high_actor': self.high_actor(observations, goals),
+            'log_alpha' : self.log_alpha(),
+            'high_log_alpha' : self.high_log_alpha(),
+            'log_alpha_prime' : self.log_alpha_prime(),
+            'high_log_alpha_prime' : self.high_log_alpha_prime(),
+        }
+            
+        # if self.flag.value_function_num =="hierarchy":
+        #     rets['high_qf_goal_encoder'] =  self.high_qf_goal_encoder(observations, goals)
+        #     rets['high_qf'] =  self.high_qf(observations, goals)
+        #     rets['high_target_qf'] =  self.high_target_qf(observations, goals)
+                                
         return rets

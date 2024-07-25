@@ -25,7 +25,7 @@ from functools import partial
 from src.gc_dataset import GCSDataset
 from src.agents import ask as learner
 from ml_collections import config_flags
-from src.utils import record_video, CsvLogger, plot_value_map
+from src.utils import record_video, CsvLogger, plot_value_map, plot_q_map
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
 from src import d4rl_utils, d4rl_ant, ant_diagnostics, viz_utils, keynode_utils
 from src.d4rl_utils import plot_obs
@@ -57,7 +57,8 @@ flags.DEFINE_integer('geom_sample', 1, '')
 flags.DEFINE_float('p_randomgoal', 0.3, '')
 flags.DEFINE_float('p_trajgoal', 0.5, '')
 flags.DEFINE_float('p_currgoal', 0.2, '')
-flags.DEFINE_float('high_p_randomgoal', 0.3, '')
+flags.DEFINE_float('high_p_randomgoal', 0.6, '')
+flags.DEFINE_float('high_p_relable', 0.5, '')
 flags.DEFINE_float('high_temperature', 1, '')
 flags.DEFINE_float('pretrain_expectile', 0.7, '')
 flags.DEFINE_float('temperature', 1, '')
@@ -195,6 +196,7 @@ def main(_):
     FLAGS.gcdataset['p_trajgoal'] = FLAGS.p_trajgoal
     FLAGS.gcdataset['p_currgoal'] = FLAGS.p_currgoal
     FLAGS.gcdataset['high_p_randomgoal'] = FLAGS.high_p_randomgoal
+    FLAGS.gcdataset['high_p_relable'] = FLAGS.high_p_relable
     FLAGS.gcdataset['geom_sample'] = FLAGS.geom_sample
     FLAGS.gcdataset['discount'] = FLAGS.discount
     FLAGS.gcdataset['way_steps'] = FLAGS.way_steps
@@ -264,7 +266,7 @@ def main(_):
         else:
             env = d4rl_utils.make_env(env_name)
             env.seed(FLAGS.seed)   
-        dataset = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
+        dataset, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
         dataset = dataset.copy({'rewards': dataset['rewards'] - 1.0})
         env.render(mode='rgb_array', width=500, height=500)
         if 'large' in FLAGS.env_name:
@@ -289,7 +291,7 @@ def main(_):
     elif 'kitchen' in FLAGS.env_name:
         env = d4rl_utils.make_env(FLAGS.env_name)
         env.seed(FLAGS.seed)
-        dataset = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS, filter_terminals=True)
+        dataset, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS, filter_terminals=True)
         dataset = dataset.copy({'observations': dataset['observations'][:, :30], 'next_observations': dataset['next_observations'][:, :30]})
     elif 'calvin' in FLAGS.env_name:
         from src.envs.calvin import CalvinEnv
@@ -348,6 +350,13 @@ def main(_):
         from src.agents import ask as learner
     elif 'ask_hilp' == FLAGS.algo_name:
         from src.agents import ask_hilp as learner
+    elif 'cql' == FLAGS.algo_name:
+        from src.agents import cql as learner
+        target_entropy = -np.prod(env.action_space.shape).item()
+        high_target_entropy = -np.prod(env.observation_space.shape).item()
+        cql_parameters = {'target_entropy':target_entropy, 'high_target_entropy':high_target_entropy}
+        FLAGS.config.update(cql_parameters)
+        FLAGS.config.update(dataset_config)
     
     agent = learner.create_learner(FLAGS.seed,
                                    example_observation,
@@ -457,7 +466,7 @@ def main(_):
     
     if 'ask' in FLAGS.algo_name:
         if load_file is None:
-            hilp_train_steps = 1*10**2 + 1
+            hilp_train_steps = int(1*10**5 + 1)
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
                         smoothing=0.1,
@@ -484,7 +493,6 @@ def main(_):
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)  
         else: 
-            hilp_train_steps = 0
             with open(load_file, "rb") as f:
                 loaded_dict = pickle.load(f)
             agent = flax.serialization.from_state_dict(agent, loaded_dict['agent'])
@@ -522,7 +530,9 @@ def main(_):
         
         find_key_node = jax.jit(key_nodes.find_closest_node)
         # find_key_node = key_nodes.find_closest_node
-    
+    else:
+        hilp_train_steps = 0
+        
     for i in tqdm.tqdm(range(1, total_steps + 1),
                    desc="main_train",
                    smoothing=0.1,
@@ -531,9 +541,10 @@ def main(_):
         agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, hilp_update=False)
 
         if i % FLAGS.log_interval == 0:
-            debug_statistics = get_debug_statistics(agent, pretrain_batch)
             train_metrics = {f'training/{k}': v for k, v in update_info.items()}
-            train_metrics.update({f'pretraining/debug/{k}': v for k, v in debug_statistics.items()})
+            if 'cql' not in FLAGS.algo_name:
+                debug_statistics = get_debug_statistics(agent, pretrain_batch)
+                train_metrics.update({f'pretraining/debug/{k}': v for k, v in debug_statistics.items()})
             train_metrics['time/epoch_time'] = (time.time() - last_time) / FLAGS.log_interval
             train_metrics['time/total_time'] = (time.time() - first_time)
             last_time = time.time()
@@ -568,9 +579,14 @@ def main(_):
                 video = record_video('Video', i, renders=renders)
                 eval_metrics['video'] = video
             print(f"{eval_info['evaluation/episode/return']*100=}")
-            # if 'ant' in FLAGS.env_name and 'hilp' not in FLAGS.algo_name:
-            #     value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], transition_index)
-            
+            if 'ant' in FLAGS.env_name and 'ask' == FLAGS.algo_name:
+                value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], transition_index)
+                eval_metrics['value_map'] = wandb.Image(value_map)
+                
+            elif 'ant' in FLAGS.env_name and 'cql' in FLAGS.algo_name:
+                q_map = plot_q_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
+                eval_metrics['q_map'] = wandb.Image(q_map)
+                
             # traj_metrics = get_traj_v(agent, example_trajectory)
             # value_viz = viz_utils.make_visual_no_image(
             #     traj_metrics,
