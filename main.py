@@ -54,11 +54,11 @@ flags.DEFINE_integer('value_hidden_dim', 512, '')
 flags.DEFINE_integer('value_num_layers', 3, '')
 flags.DEFINE_integer('geom_sample', 1, '')
 
-flags.DEFINE_float('p_randomgoal', 0.3, '')
+flags.DEFINE_float('p_randomgoal', 0.1, '') # 0.3
 flags.DEFINE_float('p_trajgoal', 0.5, '')
-flags.DEFINE_float('p_currgoal', 0.2, '')
-flags.DEFINE_float('high_p_randomgoal', 0.6, '')
-flags.DEFINE_float('high_p_relable', 0.5, '')
+flags.DEFINE_float('p_currgoal', 0.4, '') # 0.2
+flags.DEFINE_float('high_p_randomgoal', 0.1, '') # 0.6
+flags.DEFINE_float('high_p_relable', 0.8, '')
 flags.DEFINE_float('high_temperature', 1, '')
 flags.DEFINE_float('pretrain_expectile', 0.7, '')
 flags.DEFINE_float('temperature', 1, '')

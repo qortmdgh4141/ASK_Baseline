@@ -127,7 +127,7 @@ class MonolithicQF(nn.Module):
 class Scalar(nn.Module):
 
     def setup(self):
-        self.value = self.param('value', nn.initializers.zeros, 1)
+        self.value = self.param('value', nn.initializers.ones, 1)
         
     def __call__(self):
         return self.value
