@@ -353,8 +353,10 @@ def compute_low_alpha_prime_loss(agent, batch, network_params):
     # high alpha prime
     log_alpha_prime = agent.network(method='log_alpha_prime', params=network_params)
     
-    cql_min_qf1_loss = (low_cql_qf1_diff - agent.config['cql_low_target_action_gap']) * agent.config['cql_min_q_weight']
-    cql_min_qf2_loss = (low_cql_qf2_diff - agent.config['cql_low_target_action_gap']) * agent.config['cql_min_q_weight']
+    cql_min_qf1_loss = low_cql_qf1_diff
+    cql_min_qf2_loss = low_cql_qf2_diff
+    # cql_min_qf1_loss = (low_cql_qf1_diff - agent.config['cql_low_target_action_gap']) * agent.config['cql_min_q_weight']
+    # cql_min_qf2_loss = (low_cql_qf2_diff - agent.config['cql_low_target_action_gap']) * agent.config['cql_min_q_weight']
                     
     low_alpha_prime_loss = - log_alpha_prime * (cql_min_qf1_loss + cql_min_qf2_loss)*0.5
     
@@ -369,8 +371,10 @@ def compute_high_alpha_prime_loss(agent, batch, network_params):
     # high alpha prime
     log_high_alpha_prime = agent.network(method='high_log_alpha_prime', params=network_params)
     
-    cql_min_qf1_loss = (high_cql_qf1_diff - agent.config['cql_high_target_action_gap']) * agent.config['cql_min_q_weight']
-    cql_min_qf2_loss =  (high_cql_qf2_diff - agent.config['cql_high_target_action_gap']) * agent.config['cql_min_q_weight']
+    cql_min_qf1_loss = high_cql_qf1_diff
+    cql_min_qf2_loss =  high_cql_qf2_diff
+    # cql_min_qf1_loss = (high_cql_qf1_diff - agent.config['cql_high_target_action_gap']) * agent.config['cql_min_q_weight']
+    # cql_min_qf2_loss =  (high_cql_qf2_diff - agent.config['cql_high_target_action_gap']) * agent.config['cql_min_q_weight']
                     
     high_alpha_prime_loss = - log_high_alpha_prime * (cql_min_qf1_loss + cql_min_qf2_loss)*0.5
     
