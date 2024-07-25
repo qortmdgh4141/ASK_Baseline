@@ -11,7 +11,7 @@ main_py_path="/home/qortmdgh4141/disk/HIQL_Team_Project/TG/main.py" # 부모 디
 current_time=$(date "+%m-%d_%H:%M")
 project="cql-ant-ultra"
 
-extra_name="cql-A_50_fixed_alphas"
+extra_name="cql-A_50"
 
 gpu="2"
 start=0

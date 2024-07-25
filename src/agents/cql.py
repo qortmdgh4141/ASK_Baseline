@@ -485,7 +485,7 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             new_network = new_network.replace(params=freeze(params))
         
         # additional update
-        # new_params = unfreeze(agent.network.params)
+        new_params = unfreeze(agent.network.params)
         
         # # low alpha update
         # network, low_alpha_info = agent.network.apply_loss_fn(loss_fn=low_alpha_loss_fn, has_aux=True)
@@ -497,17 +497,17 @@ class JointTrainAgent(flax.struct.PyTreeNode):
         # info.update(high_alpha_info)
         # new_params['networks_high_log_alpha'] = network.params['networks_high_log_alpha']
         
-        # # low alpha prime
-        # network, low_alpha_prime_info = agent.network.apply_loss_fn(loss_fn=low_alpha_prime_loss_fn, has_aux=True)
-        # info.update(low_alpha_prime_info)        
-        # new_params['networks_log_alpha_prime'] = network.params['networks_log_alpha_prime']
+        # low alpha prime
+        network, low_alpha_prime_info = agent.network.apply_loss_fn(loss_fn=low_alpha_prime_loss_fn, has_aux=True)
+        info.update(low_alpha_prime_info)        
+        new_params['networks_log_alpha_prime'] = network.params['networks_log_alpha_prime']
         
-        # # high alpha prime
-        # network, high_alpha_prime_info = agent.network.apply_loss_fn(loss_fn=high_alpha_prime_loss_fn, has_aux=True)
-        # info.update(high_alpha_prime_info)
-        # new_params['networks_high_log_alpha_prime'] = network.params['networks_high_log_alpha_prime']
+        # high alpha prime
+        network, high_alpha_prime_info = agent.network.apply_loss_fn(loss_fn=high_alpha_prime_loss_fn, has_aux=True)
+        info.update(high_alpha_prime_info)
+        new_params['networks_high_log_alpha_prime'] = network.params['networks_high_log_alpha_prime']
         
-        # new_network = new_network.replace(params=freeze(new_params))
+        new_network = new_network.replace(params=freeze(new_params))
         
         return agent.replace(network=new_network), info
         # return agent.replace(params=freeze(new_params)), info
