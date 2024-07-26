@@ -40,7 +40,7 @@ flags.DEFINE_string('algo_name', 'ask_hilp', '') # 'ask', 'ask_hilp'
 
 flags.DEFINE_integer('gpu', 0, '')
 flags.DEFINE_integer('seed', 0, '')
-flags.DEFINE_integer('batch_size', 256, '')
+flags.DEFINE_integer('batch_size', 1024, '')
 flags.DEFINE_integer('pretrain_steps', 500002, '')
 flags.DEFINE_integer('eval_interval', 100, '')
 flags.DEFINE_integer('save_interval', 100000, '')
@@ -102,6 +102,8 @@ flags.DEFINE_integer('low_actor_train_with_high_actor', 0, '') # low actor train
 flags.DEFINE_integer('correction_value', 0, '') # value ratio correction
 flags.DEFINE_integer('n_step_hilp', 0, '') # value ratio correction
 flags.DEFINE_string('distance', '', '') # value ratio correction
+
+flags.DEFINE_integer('key_node_q', 0, '') # high qf train with key node q
 
 wandb_config = default_wandb_config()
 wandb_config.update({
@@ -228,6 +230,7 @@ def main(_):
     FLAGS.config['correction_value'] = FLAGS.correction_value
     FLAGS.config['n_step_hilp'] = FLAGS.n_step_hilp
     FLAGS.config['distance'] = FLAGS.distance
+    FLAGS.config['key_node_q'] = FLAGS.key_node_q
 
 
     # Create wandb logger
@@ -466,7 +469,7 @@ def main(_):
     
     if 'ask' in FLAGS.algo_name or 'cql' in FLAGS.algo_name:
         if load_file is None:
-            hilp_train_steps = int(1*10**5 + 1)
+            hilp_train_steps = int(1*10**1 + 1)
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
                         smoothing=0.1,
