@@ -115,6 +115,8 @@ def evaluate_with_trajectories(
                         if cur_obs_key_node is None:
                             cur_obs_key_node = cur_obs_subgoal
                         cur_obs_goal = cur_obs_key_node
+                        _, index = nodes.kmeans.index.search(x=np.array(hilp_fn(observations=observation), dtype=np.float32))
+                        cur_obs_goal = jnp.array(nodes.matched_keynode_in_raw[index[:,0]])
                         
                 # if FLAGS.relative_dist_in_eval_On:
                 #     init_dist = np.linalg.norm(cur_obs_subgoal - observation)

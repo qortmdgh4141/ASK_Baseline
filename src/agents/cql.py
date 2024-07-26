@@ -61,12 +61,12 @@ def compute_actor_loss(agent, batch, network_params):
     exp_a = jnp.clip(jnp.exp(adv), 0, 10)
     exp_a = jax.lax.stop_gradient(exp_a)
     # mse loss
-    # mse_loss = jnp.square(new_actions - batch['actions']).mean()
-    # actor_loss = (exp_a * mse_loss).mean()
+    mse_loss = jnp.square(new_actions - batch['actions']).mean()
+    actor_loss = (exp_a * mse_loss).mean()
     
     # guider style - kl loss
-    kl_loss = compute_kl(dist.loc, dist.scale_diag, batch['actions'])
-    actor_loss = (-v + kl_loss).mean() 
+    # kl_loss = compute_kl(dist.loc, dist.scale_diag, batch['actions'])
+    # actor_loss = (-v + kl_loss).mean() 
     
     # sac alpha = 1
     # actor_loss = (-v + log_pi).mean() 
@@ -82,8 +82,8 @@ def compute_actor_loss(agent, batch, network_params):
         'adv' : adv.mean(),
         'log_pi' : log_pi.mean(),
         # 'target_pi' : target_pi.mean(),
-        # 'mse': mse_loss.mean(),
-        'kl_loss': kl_loss.mean(),
+        'mse': mse_loss.mean(),
+        # 'kl_loss': kl_loss.mean(),
         'low_scale': dist.scale_diag.mean(),
         
     }
@@ -124,13 +124,17 @@ def compute_high_actor_loss(agent, batch, network_params):
     exp_a = jax.lax.stop_gradient(exp_a)
     
     # mse loss
-    # mse_loss = jnp.square(new_actions - batch['high_targets']).mean()
-    # actor_loss = (exp_a * mse_loss).mean()
+    mse_loss = jnp.square(new_actions - batch['high_targets']).mean()
+    actor_loss = (exp_a * mse_loss).mean()
 
     
     # guider style - kl loss
-    kl_loss = compute_kl(dist.loc, dist.scale_diag, batch['high_target_key_node'])
-    actor_loss = (-v + kl_loss).mean() 
+    # if agent.config['key_node_q']:
+    #     targets = batch['high_target_key_node']
+    # else: 
+    #     targets = batch['high_targets']
+    # kl_loss = compute_kl(dist.loc, dist.scale_diag, targets)
+    # actor_loss = (-v + kl_loss).mean() 
     
     # sac alpha = 1
     # actor_loss = (-v + log_pi).mean() 
@@ -145,8 +149,8 @@ def compute_high_actor_loss(agent, batch, network_params):
         'adv' : adv.mean(),
         'log_pi' : log_pi.mean(),
         # 'target_pi' : target_pi.mean(),
-        # 'mse': mse_loss.mean(),
-        'kl_loss': kl_loss.mean(),
+        'mse': mse_loss.mean(),
+        # 'kl_loss': kl_loss.mean(),
         'high_scale': dist.scale_diag.mean(),
     }
 
@@ -300,14 +304,17 @@ def compute_high_qf_loss(agent, batch, network_params):
     cql_qf2_ood = (jax.scipy.special.logsumexp(cql_cat_q2 / agent.config['cql_temp'], axis=1)* agent.config['cql_temp'])
     
     # original cql
-    # cql_qf1_diff = jnp.clip(cql_qf1_ood - q1.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
-    # cql_qf2_diff = jnp.clip(cql_qf2_ood - q2.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
 
     # key node  cql    
-    (key_q1, key_q2) = agent.network(batch['observations'], batch['high_target_key_node'], batch['high_goals'], method='high_qf', params=network_params)
-    
-    cql_qf1_diff = jnp.clip(cql_qf1_ood - (q1.mean() + key_q1.mean()).mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
-    cql_qf2_diff = jnp.clip(cql_qf2_ood - (q2.mean() + key_q2.mean()).mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+    if agent.config['key_node_q']:
+        (key_q1, key_q2) = agent.network(batch['observations'], batch['high_target_key_node'], batch['high_goals'], method='high_qf', params=network_params)
+        cql_qf1_diff = jnp.clip(cql_qf1_ood - (key_q1.mean()).mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+        cql_qf2_diff = jnp.clip(cql_qf2_ood - (key_q2.mean()).mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+    else:
+        key_q1, key_q2 = jnp.zeros(0), jnp.zeros(0)
+        cql_qf1_diff = jnp.clip(cql_qf1_ood - q1.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+        cql_qf2_diff = jnp.clip(cql_qf2_ood - q2.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+        
     
     # high alpha prime
     log_high_alpha_prime = agent.network(method='high_log_alpha_prime')
@@ -616,7 +623,7 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             )
         # Q fn, policy update
         new_network, info = agent.network.apply_loss_fn(loss_fn=loss_fn, has_aux=True)
-        # agent = agent.replace(network=new_network)
+        agent = agent.replace(network=new_network)
         
         if qf_update:
             params = unfreeze(new_network.params)

@@ -103,6 +103,8 @@ flags.DEFINE_integer('correction_value', 0, '') # value ratio correction
 flags.DEFINE_integer('n_step_hilp', 0, '') # value ratio correction
 flags.DEFINE_string('distance', '', '') # value ratio correction
 
+flags.DEFINE_integer('key_node_q', 0, '') # high qf train with key node q
+
 wandb_config = default_wandb_config()
 wandb_config.update({
     'project': f'ASK_{project}',
@@ -228,6 +230,7 @@ def main(_):
     FLAGS.config['correction_value'] = FLAGS.correction_value
     FLAGS.config['n_step_hilp'] = FLAGS.n_step_hilp
     FLAGS.config['distance'] = FLAGS.distance
+    FLAGS.config['key_node_q'] = FLAGS.key_node_q
 
 
     # Create wandb logger
@@ -466,7 +469,7 @@ def main(_):
     
     if 'ask' in FLAGS.algo_name or 'cql' in FLAGS.algo_name:
         if load_file is None:
-            hilp_train_steps = int(1*10**5 + 1)
+            hilp_train_steps = int(1*10**1 + 1)
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
                         smoothing=0.1,
@@ -514,18 +517,19 @@ def main(_):
         if FLAGS.kl_loss or FLAGS.mse_loss or FLAGS.high_action_in_hilp or 'cql' in FLAGS.algo_name:
             # add keynode in pretrain_dataset
             find_key_node_in_dataset = key_nodes.find_key_node_in_dataset
-            key_node, letent_key_node = d4rl_utils.get_latent_key_nodes(find_key_node_in_dataset, hilp_observations, FLAGS)
+            # key_node, letent_key_node = d4rl_utils.get_latent_key_nodes(find_key_node_in_dataset, hilp_observations, FLAGS)
             if FLAGS.high_action_in_hilp:
                 dataset = d4rl_utils.add_data(dataset, key_node=letent_key_node, rep_observations=hilp_observations)
             else:
-                dataset = d4rl_utils.add_data(dataset, key_node=key_node)
+                # dataset = d4rl_utils.add_data(dataset, key_node=key_node)
+                dataset = d4rl_utils.add_data(dataset, key_node=key_nodes.matched_keynode_in_raw)
                 
             pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
 
         if 'ant' in FLAGS.env_name and 'cql' not in FLAGS.algo_name:
             transition_index = (filtered_transition_index, hlip_filtered_index, dones_indexes)
             pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
-            value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index)
+            value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index, key_node=key_nodes)
             
         
         find_key_node = jax.jit(key_nodes.find_closest_node)

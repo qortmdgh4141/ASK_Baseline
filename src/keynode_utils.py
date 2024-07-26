@@ -11,8 +11,8 @@ from random import choice
 
 
 def build_keynodes(dataset, flags=None, episode_index= None, rep_obs=None):
-    obs = dataset['observations'][episode_index]
-    rep_obs = rep_obs[episode_index]
+    obs = dataset['observations']
+    rep_obs = rep_obs
     
     # if flags.specific_dim_On:
     #     if 'ant' in flags.env_name:
@@ -48,7 +48,7 @@ def build_keynodes(dataset, flags=None, episode_index= None, rep_obs=None):
         # nodes = KeyNode(obs=obs[data_index], values=dataset['returns'][data_index], flags=flags)
     # else:
         # state_values = np.ones(obs.shape[0]).astype(np.float32) 
-    nodes = KeyNode(obs=obs, rep_obs=rep_obs, flags=flags)
+    nodes = KeyNode(obs=obs, rep_obs=rep_obs, episode_index=episode_index, flags=flags)
             
     nodes.construct_nodes(spherical_On=flags.spherical_On) 
     nodes.visualize_key_nodes(flags)
@@ -63,19 +63,35 @@ def kmeans_pp_compute_distances(points, clusters):
     return jax.vmap(min_distance)(points)
 kmeans_pp_compute_distances_jit = jax.jit(kmeans_pp_compute_distances)
 
+# Euclidean distance function
+@jax.jit
+def temporal_distance(phi_s, phi_g):
+    squared_dist = ((phi_s - phi_g) ** 2).sum(axis=-1)
+    v = -jnp.sqrt(jnp.maximum(squared_dist, 1e-6))
+    return v
+
+# Cosine distance function
+@jax.jit
+def cosine_distance(a, b):
+    similarity = jnp.dot(a, b) / (jnp.linalg.norm(a) * jnp.linalg.norm(b))
+    distance = 1 - similarity
+    return distance
+
 
 class KeyNode(object):
     def __init__(self,
                  obs: np.ndarray,
                  rep_obs : np.ndarray,
+                 episode_index : np.ndarray,
                 #  values: np.ndarray,
                  flags : str = None):
 
         self.flags = flags
         self.env_name = flags.env_name
         self.keynode_num = flags.keynode_num
-        self.obs = jnp.array(obs)
-        self.rep_obs = rep_obs  
+        self.obs = np.array(obs, dtype=np.float32)
+        self.rep_obs = np.array(rep_obs, dtype=np.float32)
+        self.episode_index = np.array(episode_index, dtype=bool)
         # self.f_s = np.array(obs) 
         # self.values = values 
         self.spherical_On = bool(flags.spherical_On)
@@ -131,8 +147,31 @@ class KeyNode(object):
             clusters.append(points[index])
             indexes.append(index.copy())
             
-        return jnp.array(clusters), jnp.array(indexes)
+        return np.array(clusters).astype(np.float32), np.array(indexes)
     
+    
+    def update_centroids_with_closest_points(self, rep_X, X, centroids, labels):
+        def get_distances(cluster_points, centroid):
+            if self.spherical_On:
+                return jax.vmap(lambda point: cosine_distance(point, centroid))(cluster_points)
+            else:
+                return jax.vmap(lambda point: jnp.abs(temporal_distance(point, centroid)))(cluster_points)
+
+        centroid_observation_indices = {}
+        rep_new_centroids = np.zeros_like(centroids)
+        new_centroids = np.zeros((centroids.shape[0], X.shape[-1]))
+        for i in tqdm(range(centroids.shape[0]), desc="Updating centroids"):
+            cluster_points = X[labels == i]
+            rep_cluster_points = rep_X[labels == i]
+            if cluster_points.shape[0] > 0:
+                distances = get_distances(cluster_points, centroids[i])
+                closest_point_index = jnp.argmin(distances)
+                rep_new_centroids[i] = cluster_points[closest_point_index]
+                new_centroids[i] = X[closest_point_index]
+                centroid_observation_indices[i] = np.where(labels == i)[0][closest_point_index]
+
+        return rep_new_centroids, new_centroids, centroid_observation_indices
+
     def sparse_node(self,
                     f_s: np.ndarray,
                     # values: np.ndarray,
@@ -143,7 +182,7 @@ class KeyNode(object):
         verbose = True 
         update_index = True
         d = f_s.shape[1]
-        # max_points_per_centroid = self.f_s.shape[0] // self.keynode_num
+        max_points_per_centroid = f_s.shape[0] // self.keynode_num
         # self.keynode_dim = f_s.shape[1]
         
 
@@ -156,12 +195,36 @@ class KeyNode(object):
         #     f_s = (f_s - f_s_min) / (f_s_max - f_s_min)
         #     self.scale_min, self.scale_max  = f_s_min, f_s_max
         
-        scaled_f_s = f_s
+        # kmeans는 filtered 된 data로 수행
+        episode_filtered_rep_obs = np.array(f_s[self.episode_index], dtype=np.float32)
         # Initialize centroids using k-means++
-        self.rep_centroids, self.indexes = self.init_kmeans_pp(scaled_f_s)
-        self.centroids = self.obs[self.indexes]
-        self.normalized_centroids = self.centroids / jnp.linalg.norm(self.centroids, axis=-1, keepdims=True)
-        self.normalized_rep_centroids = self.rep_centroids / jnp.linalg.norm(self.rep_centroids, axis=-1, keepdims=True)
+        self.initial_rep_centroids, self.indexes = self.init_kmeans_pp(episode_filtered_rep_obs)
+
+        self.kmeans = faiss.Kmeans(d=episode_filtered_rep_obs.shape[-1], k=self.keynode_num, seed=self.flags.seed, 
+                                   spherical=self.spherical_On, niter=niter, nredo=nredo, max_points_per_centroid=max_points_per_centroid,  update_index=update_index, verbose=verbose, gpu=True)
+        self.kmeans.train(episode_filtered_rep_obs, init_centroids=self.initial_rep_centroids)
+        
+        # 전체 dataset의 key node matching
+        _, I = self.kmeans.index.search(x=self.rep_obs, k=1)
+        labels = I[:, 0] 
+        
+        
+        self.rep_centroids, self.kmeans.centroids, centroid_observation_indices = self.update_centroids_with_closest_points(f_s, self.obs, self.kmeans.centroids, labels)
+        self.rep_centroids = self.kmeans.centroids
+        
+        
+        # centroids from datasets
+        _, I = self.kmeans.index.search(x=self.rep_obs, k=1)
+        labels = I[:, 0] 
+        
+        self.matched_keynode_in_rep = self.rep_obs[centroid_observation_indices]
+        self.matched_keynode_in_raw = self.obs[centroid_observation_indices]
+        
+        # initilize centroids not clustering
+        # self.centroids = self.obs[self.indexes]
+        # self.normalized_centroids = self.centroids / jnp.linalg.norm(self.centroids, axis=-1, keepdims=True)
+        # self.normalized_rep_centroids = self.rep_centroids / jnp.linalg.norm(self.rep_centroids, axis=-1, keepdims=True)
+        
         
         # 0610 승호수정 spherical
         # self.kmeans = faiss.Kmeans(d=self.keynode_dim, k=self.keynode_num, seed=self.flags.seed, spherical=self.spherical_On,
@@ -191,7 +254,8 @@ class KeyNode(object):
         
         # print(f"Offline Dataset => Clustered Nodes  /   {len(f_s)} => {len(reduced_f_s)}")
         # return reduced_f_s, weighted_values, labels
-        return self.centroids, self.rep_centroids, self.indexes
+        # return self.centroids, self.rep_centroids, self.indexes
+        return self.matched_keynode_in_raw, self.matched_keynode_in_rep, self.indexes
 
     def calculate_weighted_values(self,
                                   labels: np.ndarray,
