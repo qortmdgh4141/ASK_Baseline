@@ -312,6 +312,10 @@ def sparse_data(dataset, sparse_data_index=None):
         )
         
 def add_data(dataset, rep_observations=None, rep_next_observations=None, key_node=None):
+    rep_observations = dataset['rep_observations'] if 'rep_observations' in dataset.keys() and dataset['rep_observations'] is not None else None
+    rep_next_observations = dataset['rep_next_observations'] if 'rep_next_observations' in dataset.keys() and dataset['rep_next_observations'] is not None else None
+    key_node = dataset['key_node'] if 'key_node' in dataset.keys() and dataset['key_node'] is not None else None
+    
     return Dataset.create(
             observations=dataset['observations'],
             actions=dataset['actions'].astype(np.float32),

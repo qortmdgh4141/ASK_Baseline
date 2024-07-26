@@ -161,7 +161,7 @@ class GCSDataset(GCDataset):
             batch['high_masks'] = (1.0 - high_success.astype(float))
             
             
-            if 'key_node' in self.dataset.keys():
+            if 'key_node' in self.dataset.keys() and self.dataset['key_node'] is not None:
                 batch['high_target_key_node'] = self.dataset['key_node'][high_target_idx]
                 if 'rep_observations' in self.dataset.keys():
                     batch['rep_low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['rep_observations'])

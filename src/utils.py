@@ -166,26 +166,27 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     
     # real obs value map
     if key_node is not None:
-        key_node_index = np.random.choice(key_node.shape[0], size=5)
+        key_node_index = np.random.choice(pretrain_batch['observations'].shape[0], size=5)
         key_x, key_y = pretrain_batch['observations'][key_node_index,0], pretrain_batch['observations'][key_node_index,1]
         sc2 = axes[0,1].scatter(key_x, key_y)
         
         _, I = key_node.kmeans.index.search(x=pretrain_batch['rep_observations'][key_node_index], k=5)
         labels = I[:, :5] 
         for i in range(5):
-            x, y = pretrain_batch['observations'][labels[:,i],0], pretrain_batch['observations'][labels[:,i],1]
-            sc2 = axes[0,1].scatter(x, y)
+            x, y = key_node.centroids[labels[:,i],0], key_node.centroids[labels[:,i],1]
+            sc2 = axes[0,1].scatter(x, y, s=10-i)
         
         # batch_size, obs_dim = pretrain_batch['key_node'].shape
         # real_obs_value = agent.network(pretrain_batch['observations'], np.tile(goal_info, (batch_size,1)), method='hilp_value')[0]
         axes[0,1].set_title('nearest key node')
 
-    # nearest key node map
-    batch_size, obs_dim = pretrain_batch['observations'].shape
-    real_obs_value = agent.network(pretrain_batch['observations'], np.tile(goal_info, (batch_size,1)), method='hilp_value')[0]
-    x, y = pretrain_batch['observations'][:,0], pretrain_batch['observations'][:,1]
-    sc2 = axes[0,1].scatter(x, y, c=real_obs_value, cmap=cmap, vmin=-101, vmax=0)
-    axes[0,1].set_title('real obs value')
+    else:
+        # nearest key node map
+        batch_size, obs_dim = pretrain_batch['observations'].shape
+        real_obs_value = agent.network(pretrain_batch['observations'], np.tile(goal_info, (batch_size,1)), method='hilp_value')[0]
+        x, y = pretrain_batch['observations'][:,0], pretrain_batch['observations'][:,1]
+        sc2 = axes[0,1].scatter(x, y, c=real_obs_value, cmap=cmap, vmin=-101, vmax=0)
+        axes[0,1].set_title('real obs value')
     
     cbar_ax_value = fig.add_subplot(gs[0,2])
     cbar = plt.colorbar(sc2,  cax=cbar_ax_value, label='value')

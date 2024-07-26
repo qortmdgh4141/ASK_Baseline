@@ -104,6 +104,7 @@ flags.DEFINE_integer('n_step_hilp', 0, '') # value ratio correction
 flags.DEFINE_string('distance', '', '') # value ratio correction
 
 flags.DEFINE_integer('key_node_q', 0, '') # high qf train with key node q
+flags.DEFINE_integer('key_node_train', 0, '') # high qf train with key node q
 
 wandb_config = default_wandb_config()
 wandb_config.update({
@@ -231,6 +232,7 @@ def main(_):
     FLAGS.config['n_step_hilp'] = FLAGS.n_step_hilp
     FLAGS.config['distance'] = FLAGS.distance
     FLAGS.config['key_node_q'] = FLAGS.key_node_q
+    FLAGS.config['key_node_train'] = FLAGS.key_node_train
 
 
     # Create wandb logger
@@ -506,6 +508,8 @@ def main(_):
         
         hilp_observations = d4rl_utils.get_hilp_obs(agent, dataset['observations'], FLAGS)
         hilp_next_observations = d4rl_utils.get_hilp_obs(agent, dataset['next_observations'], FLAGS)
+        dataset = d4rl_utils.add_data(dataset, rep_observations=hilp_observations)
+        
         key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index=filtered_transition_index, rep_obs=hilp_observations)
 
     
@@ -519,14 +523,16 @@ def main(_):
             find_key_node_in_dataset = key_nodes.find_key_node_in_dataset
             # key_node, letent_key_node = d4rl_utils.get_latent_key_nodes(find_key_node_in_dataset, hilp_observations, FLAGS)
             if FLAGS.high_action_in_hilp:
-                dataset = d4rl_utils.add_data(dataset, key_node=letent_key_node, rep_observations=hilp_observations)
+                # dataset = d4rl_utils.add_data(dataset, key_node=letent_key_node, rep_observations=hilp_observations)
+                dataset = dataset.copy({'rep_observations' : hilp_observations})
             else:
                 # dataset = d4rl_utils.add_data(dataset, key_node=key_node)
-                dataset = d4rl_utils.add_data(dataset, key_node=key_nodes.matched_keynode_in_raw)
+                dataset = dataset.copy({'key_node' : key_nodes.matched_keynode_in_raw})
+                dataset = dataset.copy({'rep_observations' : hilp_observations})
                 
             pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
 
-        if 'ant' in FLAGS.env_name and 'cql' not in FLAGS.algo_name:
+        if 'ant' in FLAGS.env_name:
             transition_index = (filtered_transition_index, hlip_filtered_index, dones_indexes)
             pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
             value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index, key_node=key_nodes)

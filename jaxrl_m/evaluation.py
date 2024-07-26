@@ -111,12 +111,12 @@ def evaluate_with_trajectories(
                         distance, cur_obs_latent_key_node, hilp_subgoal, cur_obs_key_node  = find_key_node(jnp.concatenate([hilp_fn(observations=observation), cur_obs_subgoal], axis=0))
                         cur_obs_goal = cur_obs_latent_key_node
                     else:
-                        distance, _, hilp_subgoal, cur_obs_key_node  = find_key_node(hilp_fn(observations=jnp.vstack([observation, cur_obs_subgoal])).reshape(-1))
-                        if cur_obs_key_node is None:
-                            cur_obs_key_node = cur_obs_subgoal
-                        cur_obs_goal = cur_obs_key_node
-                        _, index = nodes.kmeans.index.search(x=np.array(hilp_fn(observations=observation), dtype=np.float32))
-                        cur_obs_goal = jnp.array(nodes.matched_keynode_in_raw[index[:,0]])
+                        # distance, _, hilp_subgoal, cur_obs_key_node  = find_key_node(hilp_fn(observations=jnp.vstack([observation, cur_obs_subgoal])).reshape(-1))
+                        # if cur_obs_key_node is None:
+                        #     cur_obs_key_node = cur_obs_subgoal
+                        # cur_obs_goal = cur_obs_key_node
+                        _, index = nodes.kmeans.index.search(x=np.array(hilp_fn(observations=observation), dtype=np.float32).reshape(1,-1), k=1)
+                        cur_obs_goal, cur_obs_key_node = jnp.array(nodes.matched_keynode_in_raw[index[0,0]])
                         
                 # if FLAGS.relative_dist_in_eval_On:
                 #     init_dist = np.linalg.norm(cur_obs_subgoal - observation)

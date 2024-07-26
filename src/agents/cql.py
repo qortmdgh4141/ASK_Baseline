@@ -124,7 +124,11 @@ def compute_high_actor_loss(agent, batch, network_params):
     exp_a = jax.lax.stop_gradient(exp_a)
     
     # mse loss
-    mse_loss = jnp.square(new_actions - batch['high_targets']).mean()
+    if agent.config['key_node_train']:
+        target = batch['high_target_key_node']
+    else:
+        target = batch['high_targets']
+    mse_loss = jnp.square(new_actions - target).mean()
     actor_loss = (exp_a * mse_loss).mean()
 
     
