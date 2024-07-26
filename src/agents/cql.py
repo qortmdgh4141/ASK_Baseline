@@ -306,8 +306,8 @@ def compute_high_qf_loss(agent, batch, network_params):
     # key node  cql    
     (key_q1, key_q2) = agent.network(batch['observations'], batch['high_target_key_node'], batch['high_goals'], method='high_qf', params=network_params)
     
-    cql_qf1_diff = jnp.clip(cql_qf1_ood - q1.mean() - key_q1.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
-    cql_qf2_diff = jnp.clip(cql_qf2_ood - q2.mean() - key_q2.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+    cql_qf1_diff = jnp.clip(cql_qf1_ood - (q1.mean() + key_q1.mean()).mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+    cql_qf2_diff = jnp.clip(cql_qf2_ood - (q2.mean() + key_q2.mean()).mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
     
     # high alpha prime
     log_high_alpha_prime = agent.network(method='high_log_alpha_prime')
