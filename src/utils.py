@@ -157,7 +157,7 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     xx, yy = np.meshgrid(y, x)
     coordinates = np.dstack((yy,xx))
     observations = np.concatenate((coordinates, joint), axis=2)
-    value = agent.network(observations, goal_infos, method='value')[0].transpose(1,0)
+    value = agent.network(observations, goal_infos, method='hilp_value')[0].transpose(1,0)
     
     # value map
     sc1 = axes[0,0].imshow(value, cmap='Blues_r', interpolation='nearest')
@@ -165,7 +165,8 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     axes[0,0].invert_yaxis() 
     
     # real obs value map
-    real_obs_value = agent.network(pretrain_batch['observations'], np.tile(goal_info, (1024,1)), method='value')[0]
+    batch_size, obs_dim = pretrain_batch['observations'].shape
+    real_obs_value = agent.network(pretrain_batch['observations'], np.tile(goal_info, (batch_size,1)), method='hilp_value')[0]
     x, y = pretrain_batch['observations'][:,0], pretrain_batch['observations'][:,1]
     sc2 = axes[0,1].scatter(x, y, c=real_obs_value, cmap=cmap, vmin=-101, vmax=0)
     axes[0,1].set_title('real obs value')
@@ -174,11 +175,11 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     cbar = plt.colorbar(sc2,  cax=cbar_ax_value, label='value')
     # sub goals value map
     
-    if trajs is not None and subgoals.shape[0]>1024:
-        index = np.random.choice(subgoals.shape[0], size=1024)
+    if trajs is not None and subgoals.shape[0]>batch_size:
+        index = np.random.choice(subgoals.shape[0], size=batch_size)
         subgoals = subgoals[index]
         
-        subgoals_value = agent.network(subgoals, np.tile(goal_info, (subgoals.shape[0],1)), method='value')[0]
+        subgoals_value = agent.network(subgoals, np.tile(goal_info, (subgoals.shape[0],1)), method='hilp_value')[0]
         x, y = subgoals[:,0], subgoals[:,1]
         sc3 = axes[1,0].scatter(x, y, c=subgoals_value, cmap=cmap, vmin=-101, vmax=0)
         axes[1,0].set_title('subgoals value')
@@ -194,16 +195,16 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
             filtered_transition_index, hlip_filtered_index, dones_indexes = transition_index
             random_obs_sub = obs[np.random.choice(obs[filtered_transition_index].shape[0], size=filtered_transition_index.sum())]
             hilp_filtered_obs_sub = obs[filtered_transition_index]
-            s=0.1
+            s=5
         
         else:
-            filtered_transition_index = transition_index = np.random.choice(obs.shape[0], size=1024)
+            filtered_transition_index = transition_index = np.random.choice(obs.shape[0], size=batch_size)
             
-            random_obs_sub = hilp_filtered_obs_sub = obs[np.random.choice(obs.shape[0], size=1024)]
-            s=1
+            random_obs_sub = hilp_filtered_obs_sub = obs[np.random.choice(obs.shape[0], size=batch_size)]
+            s=5
         
         hilp_value = agent.network(hilp_filtered_obs_sub, np.tile(goal_info, (hilp_filtered_obs_sub.shape[0],1)), method='hilp_value')[0]
-        obs_value = agent.network(random_obs_sub, np.tile(goal_info, (random_obs_sub.shape[0],1)), method='value')[0]
+        obs_value = agent.network(random_obs_sub, np.tile(goal_info, (random_obs_sub.shape[0],1)), method='hilp_value')[0]
         
         x_, y_ = random_obs_sub[:,0], random_obs_sub[:,1]
         x, y = hilp_filtered_obs_sub[:,0], hilp_filtered_obs_sub[:,1]
@@ -361,8 +362,9 @@ def plot_q_map(agent, base_observation, goal_info, i, g_start_time, pretrain_bat
     axes[0,0].set_title('all map q value')
     axes[0,0].invert_yaxis() 
     
+    batch_size, obs_dim = pretrain_batch['observations'].shape
     # real obs value map
-    real_obs_value = agent.network(np.tile(base_observation, (1024,1)), pretrain_batch['observations'], np.tile(goal_info, (1024,1)), method='high_qf')[0]
+    real_obs_value = agent.network(np.tile(base_observation, (batch_size,1)), pretrain_batch['observations'], np.tile(goal_info, (batch_size,1)), method='high_qf')[0]
     x, y = pretrain_batch['observations'][:,0], pretrain_batch['observations'][:,1]
     sc2 = axes[0,1].scatter(x, y, c=real_obs_value, cmap=cmap)
     axes[0,1].set_title('real obs q value')
@@ -371,8 +373,8 @@ def plot_q_map(agent, base_observation, goal_info, i, g_start_time, pretrain_bat
     cbar = plt.colorbar(sc2,  cax=cbar_ax_value, label='q value')
     # sub goals value map
     
-    if trajs is not None and subgoals.shape[0]>1024:
-        index = np.random.choice(subgoals.shape[0], size=1024)
+    if trajs is not None and subgoals.shape[0]>batch_size:
+        index = np.random.choice(subgoals.shape[0], size=batch_size)
         subgoals = subgoals[index]
         
         subgoals_value = agent.network(subgoals, np.tile(goal_info, (subgoals.shape[0],1)), method='high_qf')[0]
@@ -405,22 +407,22 @@ def plot_q_map(agent, base_observation, goal_info, i, g_start_time, pretrain_bat
     
     obs_min = jnp.min(pretrain_batch['observations'], axis=0)
     obs_max = jnp.max(pretrain_batch['observations'], axis=0)
-    random_obs_sub = jax.random.uniform(key=agent.rng, shape=(1024, pretrain_batch['observations'].shape[-1]), minval=obs_min, maxval=obs_max)
+    random_obs_sub = jax.random.uniform(key=agent.rng, shape=(batch_size, pretrain_batch['observations'].shape[-1]), minval=obs_min, maxval=obs_max)
     
     
     
-    obs_value = agent.network(np.tile(base_observation, (1024,1)), random_obs_sub, np.tile(goal_info, (random_obs_sub.shape[0],1)), method='high_qf')[0]
+    obs_value = agent.network(np.tile(base_observation, (batch_size,1)), random_obs_sub, np.tile(goal_info, (random_obs_sub.shape[0],1)), method='high_qf')[0]
     
     x_, y_ = random_obs_sub[:,0], random_obs_sub[:,1]
-    # x, y = hilp_filtered_obs_sub[:,0], hilp_filtered_obs_sub[:,1]
-    random_obs_value = agent.network(np.tile(pretrain_batch['observations'][500], (1024,1)), random_obs_sub, np.tile(goal_info, (random_obs_sub.shape[0],1)), method='high_qf')[0]
+    key_x, key_y = pretrain_batch['key_node'][:,0], pretrain_batch['key_node'][:,1]
+    random_obs_value = agent.network(np.tile(base_observation, (batch_size,1)), pretrain_batch['key_node'], np.tile(goal_info, (random_obs_sub.shape[0],1)), method='high_qf')[0]
     
     sc3 = axes[1,0].scatter(x_, y_, c=obs_value, cmap=cmap)
     axes[1,0].set_title('obs_value random sampled')
     
     # sub goals identity map
-    sc4 = axes[1,1].scatter(x_, y_, c=random_obs_value, cmap=cmap)
-    axes[1,1].set_title('obs_value random sampled')
+    sc4 = axes[1,1].scatter(key_x, key_y, c=random_obs_value, cmap=cmap)
+    axes[1,1].set_title('obs_value key node')
     
     
     cbar_ax_identity = fig.add_subplot(gs[1,2])

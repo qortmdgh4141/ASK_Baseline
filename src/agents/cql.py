@@ -15,7 +15,7 @@ import flax.linen as nn
 from flax.core import freeze, unfreeze
 import ml_collections
 from . import iql
-from src.special_networks import Representation, HierarchicalActorCritic_HCQL, RelativeRepresentation, MonolithicQF, Scalar
+from src.special_networks import Representation, HierarchicalActorCritic_HCQL, RelativeRepresentation, MonolithicQF, Scalar, HILP_GoalConditionedPhiValue
 
 def extend_and_repeat(tensor, axis, repeat):
     return jnp.repeat(jnp.expand_dims(tensor, axis), repeat, axis=axis)
@@ -23,6 +23,10 @@ def extend_and_repeat(tensor, axis, repeat):
 def expectile_loss(adv, diff, expectile=0.7):
     weight = jnp.where(adv >= 0, expectile, (1 - expectile))
     return weight * (diff**2)
+
+def compute_kl(post_mean, post_std, prior_mean, prior_std=1):
+    kl = jnp.log(prior_std) - jnp.log(post_std) + 0.5 * ((post_std**2 + (post_mean - prior_mean)**2) / prior_std**2 - 1)
+    return jnp.mean(kl, axis=-1)
 
 def compute_actor_loss(agent, batch, network_params):
     # sac policy loss
@@ -34,7 +38,7 @@ def compute_actor_loss(agent, batch, network_params):
     
     # alpha = jnp.exp(agent.network(method='log_alpha', params=network_params)) * agent.config['alpha_multiplier']
     # alpha = jnp.clip(alpha, 0, 1)
-    # actor_loss = (-q + alpha * log_pi).mean()
+    # # actor_loss = (-q + alpha * log_pi).mean()
     
     # batch['low_log_pi'] = log_pi
     
@@ -55,11 +59,19 @@ def compute_actor_loss(agent, batch, network_params):
     
     adv = q - v
     exp_a = jnp.clip(jnp.exp(adv), 0, 10)
-    mse_loss = jnp.square(new_actions - batch['actions']).mean()
-    # target_pi = dist.log_prob(batch['actions'])
-    # mse_loss = jnp.square(log_pi - target_pi).mean()
     exp_a = jax.lax.stop_gradient(exp_a)
-    actor_loss = (exp_a * mse_loss).mean()
+    # mse loss
+    # mse_loss = jnp.square(new_actions - batch['actions']).mean()
+    # actor_loss = (exp_a * mse_loss).mean()
+    
+    # guider style - kl loss
+    kl_loss = compute_kl(dist.loc, dist.scale_diag, batch['actions'])
+    actor_loss = (-v + kl_loss).mean() 
+    
+    # sac alpha = 1
+    # actor_loss = (-v + log_pi).mean() 
+    
+
 
     return actor_loss, {
         'actor_loss': actor_loss,
@@ -70,7 +82,8 @@ def compute_actor_loss(agent, batch, network_params):
         'adv' : adv.mean(),
         'log_pi' : log_pi.mean(),
         # 'target_pi' : target_pi.mean(),
-        'mse': mse_loss.mean(),
+        # 'mse': mse_loss.mean(),
+        'kl_loss': kl_loss.mean(),
         'low_scale': dist.scale_diag.mean(),
         
     }
@@ -108,12 +121,20 @@ def compute_high_actor_loss(agent, batch, network_params):
     
     adv = q - v
     exp_a = jnp.clip(jnp.exp(adv), 0, 10)
-    mse_loss = jnp.square(new_actions - batch['high_targets']).mean()
-    
-    # target_pi = dist.log_prob(batch['high_targets'])
-    # mse_loss = jnp.square(log_pi - target_pi).mean()
     exp_a = jax.lax.stop_gradient(exp_a)
-    actor_loss = (exp_a * mse_loss).mean()
+    
+    # mse loss
+    # mse_loss = jnp.square(new_actions - batch['high_targets']).mean()
+    # actor_loss = (exp_a * mse_loss).mean()
+
+    
+    # guider style - kl loss
+    kl_loss = compute_kl(dist.loc, dist.scale_diag, batch['high_target_key_node'])
+    actor_loss = (-v + kl_loss).mean() 
+    
+    # sac alpha = 1
+    # actor_loss = (-v + log_pi).mean() 
+
 
     return actor_loss, {
         'high_actor_loss': actor_loss,
@@ -124,7 +145,8 @@ def compute_high_actor_loss(agent, batch, network_params):
         'adv' : adv.mean(),
         'log_pi' : log_pi.mean(),
         # 'target_pi' : target_pi.mean(),
-        'mse': mse_loss.mean(),
+        # 'mse': mse_loss.mean(),
+        'kl_loss': kl_loss.mean(),
         'high_scale': dist.scale_diag.mean(),
     }
 
@@ -185,7 +207,7 @@ def compute_qf_loss(agent, batch, network_params):
     
     cql_qf1_diff = jnp.clip(cql_qf1_ood - q1.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
     cql_qf2_diff = jnp.clip(cql_qf2_ood - q2.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
-                
+    
     # low alpha prime
     log_low_alpha_prime = agent.network(method='log_alpha_prime')
     low_alpha_prime = jnp.clip(jnp.exp(log_low_alpha_prime), 0.0, 1e6)
@@ -277,8 +299,15 @@ def compute_high_qf_loss(agent, batch, network_params):
     cql_qf1_ood = (jax.scipy.special.logsumexp(cql_cat_q1 / agent.config['cql_temp'], axis=1)* agent.config['cql_temp'])
     cql_qf2_ood = (jax.scipy.special.logsumexp(cql_cat_q2 / agent.config['cql_temp'], axis=1)* agent.config['cql_temp'])
     
-    cql_qf1_diff = jnp.clip(cql_qf1_ood - q1.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
-    cql_qf2_diff = jnp.clip(cql_qf2_ood - q2.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+    # original cql
+    # cql_qf1_diff = jnp.clip(cql_qf1_ood - q1.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+    # cql_qf2_diff = jnp.clip(cql_qf2_ood - q2.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+
+    # key node  cql    
+    (key_q1, key_q2) = agent.network(batch['observations'], batch['high_target_key_node'], batch['high_goals'], method='high_qf', params=network_params)
+    
+    cql_qf1_diff = jnp.clip(cql_qf1_ood - q1.mean() - key_q1.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+    cql_qf2_diff = jnp.clip(cql_qf2_ood - q2.mean() - key_q2.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
     
     # high alpha prime
     log_high_alpha_prime = agent.network(method='high_log_alpha_prime')
@@ -308,6 +337,7 @@ def compute_high_qf_loss(agent, batch, network_params):
         'q max': q1.max(),
         'q min': q1.min(),
         'q mean': q1.mean(),
+        'q key_q': key_q1.mean(),
         'q bellman loss': q_loss1.mean(),
         'q cql_qf_diff': cql_qf1_diff.mean(),
         'q cql_min_qf_loss': cql_min_qf1_loss.mean(),
@@ -357,8 +387,6 @@ def compute_low_alpha_prime_loss(agent, batch, network_params):
     
     cql_min_qf1_loss = low_cql_qf1_diff
     cql_min_qf2_loss = low_cql_qf2_diff
-    # cql_min_qf1_loss = (low_cql_qf1_diff - agent.config['cql_low_target_action_gap']) * agent.config['cql_min_q_weight']
-    # cql_min_qf2_loss = (low_cql_qf2_diff - agent.config['cql_low_target_action_gap']) * agent.config['cql_min_q_weight']
                     
     low_alpha_prime_loss = - log_alpha_prime * (cql_min_qf1_loss + cql_min_qf2_loss)*0.5
     
@@ -375,15 +403,107 @@ def compute_high_alpha_prime_loss(agent, batch, network_params):
     
     cql_min_qf1_loss = high_cql_qf1_diff
     cql_min_qf2_loss =  high_cql_qf2_diff
-    # cql_min_qf1_loss = (high_cql_qf1_diff - agent.config['cql_high_target_action_gap']) * agent.config['cql_min_q_weight']
-    # cql_min_qf2_loss =  (high_cql_qf2_diff - agent.config['cql_high_target_action_gap']) * agent.config['cql_min_q_weight']
                     
     high_alpha_prime_loss = - log_high_alpha_prime * (cql_min_qf1_loss + cql_min_qf2_loss)*0.5
     
     return high_alpha_prime_loss , {
         'high_alpha_prime' : jnp.exp(log_high_alpha_prime)
     }
+    
+def hilp_compute_value_loss(agent, batch, network_params):
+    masks = 1.0 - batch['rewards']
+    rewards = batch['rewards'] - 1.0
+    
+    (next_v1, next_v2) = agent.network(batch['next_observations'], batch['goals'], method='hilp_target_value')
+    next_v = jnp.minimum(next_v1, next_v2)
+    q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_v
 
+    (v1_t, v2_t) = agent.network(batch['observations'], batch['goals'], method='hilp_target_value')
+    v_t = (v1_t + v2_t) / 2
+    adv = q - v_t
+
+    q1 = rewards + agent.config['discount'] * masks * next_v1
+    q2 = rewards + agent.config['discount'] * masks * next_v2
+    (v1, v2) = agent.network(batch['observations'], batch['goals'], method='hilp_value', params=network_params)
+    v = (v1 + v2) / 2
+
+    value_loss1 = expectile_loss(adv, q1 - v1, agent.config['pretrain_expectile']).mean()
+    value_loss2 = expectile_loss(adv, q2 - v2, agent.config['pretrain_expectile']).mean()
+    
+    if agent.config['n_step_hilp']:
+        if agent.config['distance'] == 'log': # 'distance_log'
+            # obs -> target : value
+            (obs_target_v1, obs_target_v2) = agent.network(batch['observations'], batch['low_goals'], method='hilp_value', params=network_params)
+            obs_target_v = jnp.minimum(obs_target_v1, obs_target_v2)
+            distance_obs_target_v = jnp.log(jnp.maximum(1-obs_target_v, 1e-6))
+            # target -> goals : value
+            (target_goal_v1, target_goal_v2) = agent.network(batch['low_goals'], batch['goals'], method='hilp_target_value', params=network_params)
+            target_goal_v = jnp.minimum(target_goal_v1, target_goal_v2)
+            distance_target_goal_v = jnp.log(jnp.maximum(1-target_goal_v, 1e-6))
+            # obs -> next_obs : value
+            (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
+            obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
+            distance_obs_next_obs_v = jnp.log(jnp.maximum(1-obs_next_obs_v, 1e-6))
+            
+            distance_next_v = jnp.log(jnp.maximum(1-next_v, 1e-6))
+            
+            n_step_loss = jnp.mean(((distance_obs_target_v + distance_target_goal_v) - (distance_obs_next_obs_v + distance_next_v))**2)
+            
+        elif agent.config['distance'] =='first':
+            # obs -> target : value
+            (obs_target_v1, obs_target_v2) = agent.network(batch['observations'], batch['low_goals'], method='hilp_value', params=network_params)
+            obs_target_v = jnp.minimum(obs_target_v1, obs_target_v2)
+            # obs -> next_obs : value
+            # (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
+            # obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
+            # next -> tareget : value
+            (next_obs_target_v1, next_obs_target_v2) = agent.network(batch['next_observations'], batch['low_goals'], method='hilp_target_value')
+            next_obs_target_v = jnp.minimum(next_obs_target_v1, next_obs_target_v2)
+            
+            #first
+            n_step_loss = jnp.mean((obs_target_v  - (batch['rewards'] + next_obs_target_v))**2)
+            
+        elif agent.config['distance'] =='second':
+            # obs -> target : value
+            (obs_target_v1, obs_target_v2) = agent.network(batch['observations'], batch['low_goals'], method='hilp_value', params=network_params)
+            obs_target_v = jnp.minimum(obs_target_v1, obs_target_v2)
+            # target -> goals : value
+            (target_goal_v1, target_goal_v2) = agent.network(batch['low_goals'], batch['goals'], method='hilp_target_value', params=network_params)
+            target_goal_v = jnp.minimum(target_goal_v1, target_goal_v2)
+            # obs -> next_obs : value
+            # (obs_next_obs_v1, obs_next_obs_v2) = agent.network(batch['observations'], batch['next_observations'], method='hilp_target_value')
+            # obs_next_obs_v = jnp.minimum(obs_next_obs_v1, obs_next_obs_v2)
+            # next -> target : value
+            # (next_obs_target_v1, next_obs_target_v2) = agent.network(batch['next_observations'], batch['low_goals'], method='hilp_target_value')
+            # next_obs_target_v = jnp.minimum(next_obs_target_v1, next_obs_target_v2)
+            
+            # second
+            # n_step_loss_1 = jnp.mean((obs_target_v  - (obs_next_obs_v + next_obs_target_v))**2)
+            # n_step_loss_2 = jnp.mean(((obs_target_v + target_goal_v) - (obs_next_obs_v + next_v))**2)
+            n_step_loss = jnp.mean(((obs_target_v + target_goal_v) - (batch['rewards'] + next_v))**2)
+            # n_step_loss = n_step_loss_1 + n_step_loss_2
+        else:
+            raise NotImplementedError
+    
+        value_loss = value_loss1 + value_loss2 + n_step_loss
+    else:
+        value_loss = value_loss1 + value_loss2
+        n_step_loss = 0
+        
+    return value_loss, {
+        'value_loss': value_loss,
+        'v max': v.max(),
+        'v min': v.min(),
+        'v mean': v.mean(),
+        'abs adv mean': jnp.abs(adv).mean(),
+        'adv mean': adv.mean(),
+        'adv max': adv.max(),
+        'adv min': adv.min(),
+        'accept prob': (adv >= 0).mean(),
+        'n_step_loss': n_step_loss,
+        'value_loss_only': value_loss1 + value_loss2,
+    }
+    
 class JointTrainAgent(flax.struct.PyTreeNode):
     rng: PRNGKey
     qf: TrainState
@@ -396,7 +516,21 @@ class JointTrainAgent(flax.struct.PyTreeNode):
     def pretrain_update(agent, pretrain_batch, seed=None, qf_update=True, actor_update=True, alpha_update=True, high_actor_update=True,  hilp_update=True):
         def loss_fn(network_params):
             info = {}
-
+            
+            if hilp_update:
+                qf_update, actor_update, high_actor_update = False, False, False
+            else:
+                qf_update, actor_update, high_actor_update = True, True, True
+                
+            # HILP Representation
+            if hilp_update:
+            # if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
+                hilp_value_loss, hilp_value_info = hilp_compute_value_loss(agent, pretrain_batch, network_params)
+                for k, v in hilp_value_info.items():
+                    info[f'hilp_value/{k}'] = v
+            else:
+                hilp_value_loss = 0.
+            
             # Q function
             if qf_update:
                 qf_loss, qf_info = compute_qf_loss(agent, pretrain_batch, network_params)
@@ -429,7 +563,7 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             else:
                 high_actor_loss = 0.
 
-            loss = qf_loss + high_qf_loss + actor_loss + high_actor_loss
+            loss = qf_loss + high_qf_loss + actor_loss + high_actor_loss + hilp_value_loss
 
             return loss, info
 
@@ -482,7 +616,7 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             )
         # Q fn, policy update
         new_network, info = agent.network.apply_loss_fn(loss_fn=loss_fn, has_aux=True)
-        agent = agent.replace(network=new_network)
+        # agent = agent.replace(network=new_network)
         
         if qf_update:
             params = unfreeze(new_network.params)
@@ -503,21 +637,38 @@ class JointTrainAgent(flax.struct.PyTreeNode):
         # info.update(high_alpha_info)
         # new_params['networks_high_log_alpha'] = network.params['networks_high_log_alpha']
         
-        # low alpha prime
-        network, low_alpha_prime_info = agent.network.apply_loss_fn(loss_fn=low_alpha_prime_loss_fn, has_aux=True)
-        info.update(low_alpha_prime_info)        
-        new_params['networks_log_alpha_prime'] = network.params['networks_log_alpha_prime']
+        # HILP update
+        # if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
+        if hilp_update:
+            params = unfreeze(new_network.params)
+            
+            hilp_new_target_params = jax.tree_map(
+            lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_hilp_value'], agent.network.params['networks_hilp_target_value']
+            )
+            params['networks_hilp_target_value'] = hilp_new_target_params
+            
+            hilp_new_params = jax.tree_map(
+            lambda op, np: np * agent.config['target_update_rate'] + op * (1 - agent.config['target_update_rate']), agent.network.params['networks_hilp_value'], new_network.params['networks_hilp_value']
+            )
+            params['networks_hilp_target_value'] = hilp_new_params
+            new_network = new_network.replace(params=freeze(params))
         
-        # high alpha prime
-        network, high_alpha_prime_info = agent.network.apply_loss_fn(loss_fn=high_alpha_prime_loss_fn, has_aux=True)
-        info.update(high_alpha_prime_info)
-        new_params['networks_high_log_alpha_prime'] = network.params['networks_high_log_alpha_prime']
-        
-        new_network = new_network.replace(params=freeze(new_params))
+        else:
+            # low alpha prime
+            network, low_alpha_prime_info = agent.network.apply_loss_fn(loss_fn=low_alpha_prime_loss_fn, has_aux=True)
+            info.update(low_alpha_prime_info)        
+            new_params['networks_log_alpha_prime'] = network.params['networks_log_alpha_prime']
+            
+            # high alpha prime
+            network, high_alpha_prime_info = agent.network.apply_loss_fn(loss_fn=high_alpha_prime_loss_fn, has_aux=True)
+            info.update(high_alpha_prime_info)
+            new_params['networks_high_log_alpha_prime'] = network.params['networks_high_log_alpha_prime']
+            
+            new_network = new_network.replace(params=freeze(new_params))
         
         return agent.replace(network=new_network), info
         # return agent.replace(params=freeze(new_params)), info
-    pretrain_update = jax.jit(pretrain_update, static_argnames=('qf_update', 'actor_update', 'alpha_update', 'high_actor_update'))
+    pretrain_update = jax.jit(pretrain_update, static_argnames=('qf_update', 'actor_update', 'alpha_update', 'high_actor_update', 'hilp_update'))
 
     def sample_actions(agent,
                        observations: np.ndarray,
@@ -553,6 +704,20 @@ class JointTrainAgent(flax.struct.PyTreeNode):
         return actions
     sample_high_actions = jax.jit(sample_high_actions, static_argnames=('num_samples',))
 
+    # HILP 
+    @jax.jit
+    def get_hilp_phi(agent,
+                            *,
+                            observations: jnp.ndarray) -> jnp.ndarray:
+        return agent.network(observations=observations, method='hilp_phi')
+
+    @jax.jit
+    def get_hilp_value(agent,
+                            *,
+                            observations: jnp.ndarray,
+                            goals: jnp.ndarray) -> jnp.ndarray:
+        return agent.network(observations=observations, goals=goals, method='hilp_value')
+    
     @jax.jit
     def get_policy_rep(agent,
                        *,
@@ -570,6 +735,7 @@ def create_learner(
         lr: float = 3e-4,
         actor_hidden_dims: Sequence[int] = (256, 256),
         qf_hidden_dims: Sequence[int] = (256, 256),
+        value_hidden_dims: Sequence[int] = (256, 256),
         discount: float = 0.99,
         tau: float = 0.005,
         temperature: float = 1,
@@ -621,6 +787,7 @@ def create_learner(
         high_policy_state_encoder = None
         high_policy_goal_encoder = None
         log_alpha = None
+        encoder = None 
         
         if visual:
             assert use_rep
@@ -668,6 +835,8 @@ def create_learner(
         high_action_dim = observations.shape[-1] if not use_rep else rep_dim
         high_actor_def = Policy(actor_hidden_dims, action_dim=high_action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
 
+        hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=encoder)
+
         network_def = HierarchicalActorCritic_HCQL(
             encoders={
                 'qf_state': qf_state_encoder,
@@ -680,6 +849,8 @@ def create_learner(
                 'high_policy_goal': high_policy_goal_encoder,
             },
             networks={
+                'hilp_value' : hilp_value_goal_encoder, # hilp
+                'hilp_target_value' : copy.deepcopy(hilp_value_goal_encoder), # hilp
                 'qf': qf_def,
                 'target_qf': copy.deepcopy(qf_def),
                 'high_qf': high_qf_def,

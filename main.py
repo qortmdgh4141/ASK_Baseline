@@ -40,7 +40,7 @@ flags.DEFINE_string('algo_name', 'ask_hilp', '') # 'ask', 'ask_hilp'
 
 flags.DEFINE_integer('gpu', 0, '')
 flags.DEFINE_integer('seed', 0, '')
-flags.DEFINE_integer('batch_size', 1024, '')
+flags.DEFINE_integer('batch_size', 256, '')
 flags.DEFINE_integer('pretrain_steps', 500002, '')
 flags.DEFINE_integer('eval_interval', 100, '')
 flags.DEFINE_integer('save_interval', 100000, '')
@@ -464,7 +464,7 @@ def main(_):
     else:
         load_file = None
     
-    if 'ask' in FLAGS.algo_name:
+    if 'ask' in FLAGS.algo_name or 'cql' in FLAGS.algo_name:
         if load_file is None:
             hilp_train_steps = int(1*10**5 + 1)
             for i in tqdm.tqdm(range(1, hilp_train_steps),
@@ -476,7 +476,7 @@ def main(_):
                 if i % FLAGS.log_interval == 0:
                     train_metrics = {f'training/{k}': v for k, v in update_info.items()}
                 
-                    if 'ant' in FLAGS.env_name and i % (FLAGS.log_interval *50) == 0:
+                    if 'ant' in FLAGS.env_name and i % (FLAGS.log_interval *10) == 0:
                         pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
                         value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
                         train_metrics['value_map'] = wandb.Image(value_map)
@@ -511,7 +511,7 @@ def main(_):
         hilp_fn = jax.jit(agent.get_hilp_phi)
         agent = agent.replace(key_nodes=key_nodes.centroids)
         
-        if FLAGS.kl_loss or FLAGS.mse_loss or FLAGS.high_action_in_hilp:
+        if FLAGS.kl_loss or FLAGS.mse_loss or FLAGS.high_action_in_hilp or 'cql' in FLAGS.algo_name:
             # add keynode in pretrain_dataset
             find_key_node_in_dataset = key_nodes.find_key_node_in_dataset
             key_node, letent_key_node = d4rl_utils.get_latent_key_nodes(find_key_node_in_dataset, hilp_observations, FLAGS)
@@ -522,7 +522,7 @@ def main(_):
                 
             pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
 
-        if 'ant' in FLAGS.env_name:
+        if 'ant' in FLAGS.env_name and 'cql' not in FLAGS.algo_name:
             transition_index = (filtered_transition_index, hlip_filtered_index, dones_indexes)
             pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
             value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index)

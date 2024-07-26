@@ -488,6 +488,9 @@ class HierarchicalActorCritic_HCQL(nn.Module):
         rets = {
             # 'vae_state_encoder' : self.vae_state_encoder(base_observations), 
             # 'vae_state_decoder' : self.vae_state_decoder(latent), 
+            
+            'hilp_value': self.hilp_value(observations, goals), 
+            'hilp_target_value': self.hilp_target_value(observations, goals),
             'high_qf' : self.high_qf(observations, observations, goals), 
             'high_target_qf' : self.high_target_qf(observations, observations, goals), 
             'qf': self.qf(observations, actions, goals),

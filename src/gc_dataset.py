@@ -162,7 +162,7 @@ class GCSDataset(GCDataset):
             
             
             if 'key_node' in self.dataset.keys():
-                batch['key_node'] = self.dataset['key_node'][indx]
+                batch['high_target_key_node'] = self.dataset['key_node'][high_target_idx]
                 if 'rep_observations' in self.dataset.keys():
                     batch['rep_low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['rep_observations'])
                 
