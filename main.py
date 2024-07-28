@@ -72,7 +72,7 @@ flags.DEFINE_integer('rep_normalizing_On', 1, '') # 0: rep_norm 제거 // 1: rep
 flags.DEFINE_integer('rep_dim', 10, '')
 
 flags.DEFINE_string('build_keynode_time', "during_training", '') # ["pre_training", "during_training", "post_training"]
-flags.DEFINE_integer('keynode_num', 20, '')
+flags.DEFINE_integer('keynode_num', 200, '')
 flags.DEFINE_integer('kmean_weight_On', 0, '')
 flags.DEFINE_integer('use_goal_info_On', 0, '')
 flags.DEFINE_string('kmean_weight_type', 'rtg_uniform', '')  # ['rtg_discount', 'rtg_uniform', "hilbert_td"]
@@ -459,7 +459,7 @@ def main(_):
     
     if False:
         if 'antmaze' in FLAGS.env_name:
-            load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/ant_ultra_diverse_d.99_dim_256_f_h_t_1_eval.pkl'
+            load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/ant_hilp_64.pkl'
         elif 'kitchen' in FLAGS.env_name:
             load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/kitchen_mixed_hilp.pkl'
         elif 'calvin' in FLAGS.env_name:
@@ -498,6 +498,7 @@ def main(_):
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)  
         else: 
+            train_metrics= dict()
             with open(load_file, "rb") as f:
                 loaded_dict = pickle.load(f)
             agent = flax.serialization.from_state_dict(agent, loaded_dict['agent'])
@@ -536,6 +537,9 @@ def main(_):
             transition_index = (filtered_transition_index, hlip_filtered_index, dones_indexes)
             pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
             value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index, key_node=key_nodes)
+            train_metrics['key_node_map'] = wandb.Image(value_map)
+            wandb.log(train_metrics, step=i)
+
             
         
         find_key_node = jax.jit(key_nodes.find_closest_node)

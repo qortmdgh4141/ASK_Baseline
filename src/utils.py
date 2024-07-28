@@ -166,11 +166,17 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
     
     # real obs value map
     if key_node is not None:
-        key_node_index = np.random.choice(pretrain_batch['observations'].shape[0], size=5)
+        key_node_index = np.random.choice(pretrain_batch['observations'].shape[0], size=1)
         key_x, key_y = pretrain_batch['observations'][key_node_index,0], pretrain_batch['observations'][key_node_index,1]
+        max_x, max_y = np.max(pretrain_batch['observations'], axis=0)[0], np.max(pretrain_batch['observations'], axis=0)[1]
         sc2 = axes[0,1].scatter(key_x, key_y)
         
-        _, I = key_node.kmeans.index.search(x=pretrain_batch['rep_observations'][key_node_index], k=5)
+        import faiss
+        
+        index = faiss.IndexFlatL2(key_node.rep_centroids.shape[-1])
+        index.add(key_node.rep_centroids)
+        _, I = index.search(pretrain_batch['rep_observations'][key_node_index], 5)
+        
         labels = I[:, :5] 
         for i in range(5):
             x, y = key_node.centroids[labels[:,i],0], key_node.centroids[labels[:,i],1]
@@ -178,6 +184,9 @@ def plot_value_map(agent, base_observation, goal_info, i, g_start_time, pretrain
         
         # batch_size, obs_dim = pretrain_batch['key_node'].shape
         # real_obs_value = agent.network(pretrain_batch['observations'], np.tile(goal_info, (batch_size,1)), method='hilp_value')[0]
+        
+        axes[0,1].set_xlim([-2,max_x])
+        axes[0,1].set_ylim([-2,max_y])
         axes[0,1].set_title('nearest key node')
 
     else:

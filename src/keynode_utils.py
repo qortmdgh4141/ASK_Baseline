@@ -210,19 +210,43 @@ class KeyNode(object):
         labels = I[:, 0] 
         
         
-        self.rep_centroids, self.centroids, centroid_observation_indices = self.update_centroids_with_closest_points(f_s, self.obs, self.kmeans.centroids, labels)
+        # faiss 함수 사용, centroid update
+        import time
+        s=time.time()
+        index = faiss.IndexFlatL2(f_s.shape[-1])
+        index.add(f_s)
+        D, I = index.search (self.kmeans.centroids, 1)
+        self.rep_centroids = f_s[I[:,0]]
+        self.centroids = self.obs[I[:,0]]
+        print(f'updating centroids {time.time() - s:.2f} s')
+        
+        s=time.time()
+        
+        index = faiss.IndexFlatL2(self.rep_centroids.shape[-1])
+        index.add(self.rep_centroids)
+        D, I = index.search (f_s, 1)        
+        self.matched_keynode_in_rep = self.rep_centroids[I[:,0]]
+        self.matched_keynode_in_raw = self.centroids[I[:,0]]
+        
+        print(f'matched between obs and centroids {time.time() - s:.2f} s')
+        
+        # labels = I[:, 0] 
+        # self.matched_keynode_in_rep = self.rep_centroids[labels]
+        # self.matched_keynode_in_raw = self.centroids[labels]
+        
+        # self.rep_centroids, self.centroids, self.centroid_observation_indices = self.update_centroids_with_closest_points(f_s, self.obs, self.kmeans.centroids, labels)
         # self.rep_centroids = self.kmeans.centroids
         
         
         # centroids from datasets
-        print(f'finding closest rep obs in dataset')
-        _, I = self.kmeans.index.search(x=self.rep_obs, k=1)
-        labels = I[:, 0] 
+        # print(f'finding closest rep obs in dataset')
+        # _, I = self.kmeans.index.search(x=self.rep_obs, k=1)
+        # labels = I[:, 0] 
         
         # rep_centroids, centroids : key node 개수의 centroids
         # matched keynode : dataset obs와 가장 가까운 centroids 
-        self.matched_keynode_in_rep = self.rep_centroids[labels]
-        self.matched_keynode_in_raw = self.centroids[labels]
+        # self.matched_keynode_in_rep = self.rep_centroids[labels]
+        # self.matched_keynode_in_raw = self.centroids[labels]
         
         # initilize centroids not clustering
         # self.centroids = self.obs[self.indexes]
@@ -259,7 +283,7 @@ class KeyNode(object):
         # print(f"Offline Dataset => Clustered Nodes  /   {len(f_s)} => {len(reduced_f_s)}")
         # return reduced_f_s, weighted_values, labels
         # return self.centroids, self.rep_centroids, self.indexes
-        return self.kmeans.centroids, self.rep_centroids, self.indexes
+        return self.centroids, self.rep_centroids, self.indexes
 
     def calculate_weighted_values(self,
                                   labels: np.ndarray,

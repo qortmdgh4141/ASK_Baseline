@@ -6,6 +6,7 @@ from collections import defaultdict
 import time
 import tqdm
 import jax.numpy as jnp
+import faiss
 
 def supply_rng(f, rng=jax.random.PRNGKey(0)):
     """
@@ -94,7 +95,8 @@ def evaluate_with_trajectories(
         dist = 0
         init_dist = 1e5 if FLAGS.relative_dist_in_eval_On else 0
         cos_distances = []
-        
+        index = faiss.IndexFlatL2(nodes.rep_centroids.shape[-1])
+        index.add(nodes.rep_centroids)
             
         while not done:
                
@@ -115,8 +117,8 @@ def evaluate_with_trajectories(
                         # if cur_obs_key_node is None:
                         #     cur_obs_key_node = cur_obs_subgoal
                         # cur_obs_goal = cur_obs_key_node
-                        _, index = nodes.kmeans.index.search(x=np.array(hilp_fn(observations=observation), dtype=np.float32).reshape(1,-1), k=1)
-                        cur_obs_goal = cur_obs_key_node = jnp.array(nodes.matched_keynode_in_raw[index[0,0]])
+                        _, I = index.search(np.array(hilp_fn(observations=cur_obs_subgoal), dtype=np.float32).reshape(1,-1), 1)
+                        cur_obs_goal = cur_obs_key_node = jnp.array(nodes.centroids[I[0,0]])
                         
                 # if FLAGS.relative_dist_in_eval_On:
                 #     init_dist = np.linalg.norm(cur_obs_subgoal - observation)
