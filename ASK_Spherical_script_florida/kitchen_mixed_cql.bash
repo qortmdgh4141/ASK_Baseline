@@ -13,7 +13,7 @@ project="cql-kitchen"
 
 extra_name="cql-A_50_eval"
 
-gpu="1"
+gpu="2"
 start=0
 end_=1
 

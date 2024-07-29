@@ -72,7 +72,7 @@ flags.DEFINE_integer('rep_normalizing_On', 1, '') # 0: rep_norm 제거 // 1: rep
 flags.DEFINE_integer('rep_dim', 10, '')
 
 flags.DEFINE_string('build_keynode_time', "during_training", '') # ["pre_training", "during_training", "post_training"]
-flags.DEFINE_integer('keynode_num', 200, '')
+flags.DEFINE_integer('keynode_num', 2, '')
 flags.DEFINE_integer('kmean_weight_On', 0, '')
 flags.DEFINE_integer('use_goal_info_On', 0, '')
 flags.DEFINE_string('kmean_weight_type', 'rtg_uniform', '')  # ['rtg_discount', 'rtg_uniform', "hilbert_td"]
@@ -453,11 +453,12 @@ def main(_):
     
     train_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'train.csv'))
     eval_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'eval.csv'))
+    return_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'return.csv'))
     first_time = time.time()
     last_time = time.time()
     
     
-    if False:
+    if True:
         if 'antmaze' in FLAGS.env_name:
             load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/ant_hilp_64.pkl'
         elif 'kitchen' in FLAGS.env_name:
@@ -498,6 +499,8 @@ def main(_):
             with open(fname, "wb") as f:
                 pickle.dump(save_dict, f)  
         else: 
+            i=0
+            hilp_train_steps=0
             train_metrics= dict()
             with open(load_file, "rb") as f:
                 loaded_dict = pickle.load(f)
@@ -534,6 +537,7 @@ def main(_):
             pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
 
         if 'ant' in FLAGS.env_name:
+            
             transition_index = (filtered_transition_index, hlip_filtered_index, dones_indexes)
             pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
             value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index, key_node=key_nodes)
@@ -643,9 +647,10 @@ def main(_):
                 score = eval_metrics['evaluation/episode.return']
             wandb.log(eval_metrics, step=hilp_train_steps+i)
             eval_logger.log(eval_metrics, step=hilp_train_steps+i)
-            
+            return_logger.log({'evaluation/episode.return' :eval_metrics['evaluation/episode.return']}, step=hilp_train_steps+i)
     train_logger.close()
     eval_logger.close()
+    return_logger.close()
 
 if __name__ == '__main__':
     import random

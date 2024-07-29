@@ -36,9 +36,9 @@ def compute_actor_loss(agent, batch, network_params):
     # q1, q2 = agent.network(batch['observations'], new_actions, batch['low_goals'], method='qf')
     # q = jnp.minimum(q1, q2)
     
-    # alpha = jnp.exp(agent.network(method='log_alpha', params=network_params)) * agent.config['alpha_multiplier']
+    # alpha = jnp.exp(agent.network(method='log_alpha')) * agent.config['alpha_multiplier']
     # alpha = jnp.clip(alpha, 0, 1)
-    # # actor_loss = (-q + alpha * log_pi).mean()
+    # actor_loss = (-q + alpha * log_pi).mean()
     
     # batch['low_log_pi'] = log_pi
     
@@ -58,7 +58,7 @@ def compute_actor_loss(agent, batch, network_params):
     v = jnp.minimum(v1, v2)
     
     adv = q - v
-    exp_a = jnp.clip(jnp.exp(adv), 0, 10)
+    exp_a = jnp.clip(jnp.exp(adv), 0, 100)
     exp_a = jax.lax.stop_gradient(exp_a)
     # mse loss
     mse_loss = jnp.square(new_actions - batch['actions']).mean()
@@ -97,10 +97,10 @@ def compute_high_actor_loss(agent, batch, network_params):
     # q1, q2 = agent.network(batch['observations'], new_actions, batch['high_goals'], method='high_qf')
     # q = jnp.minimum(q1, q2)
     
-    # alpha = jnp.exp(agent.network(method='high_log_alpha', params=network_params)) * agent.config['alpha_multiplier'] 
+    # alpha = jnp.exp(agent.network(method='high_log_alpha')) * agent.config['alpha_multiplier'] 
     # alpha = jnp.clip(alpha, 0, 1)
     
-    # actor_loss = (-q + alpha * log_pi).mean()
+    # actor_loss = (-q + alpha*log_pi).mean()
     
     # batch['high_log_pi'] = log_pi
     
@@ -120,7 +120,7 @@ def compute_high_actor_loss(agent, batch, network_params):
     v = jnp.minimum(v1, v2)
     
     adv = q - v
-    exp_a = jnp.clip(jnp.exp(adv), 0, 10)
+    exp_a = jnp.clip(jnp.exp(adv), 0, 100)
     exp_a = jax.lax.stop_gradient(exp_a)
     
     # mse loss
@@ -165,14 +165,25 @@ def compute_qf_loss(agent, batch, network_params):
     batch['rewards'] = batch['rewards'] - 1.0
 
     # sac-q loss
+    # max target back up
+    
     next_dist = agent.network(batch['next_observations'], batch['goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
     next_actions, next_log_pi = supply_rng(next_dist.sample_and_log_prob)(sample_shape=10)
     
-    # max target back up
     (next_q1, next_q2) = agent.network(jnp.tile(batch['next_observations'], (10,1,1)), next_actions, jnp.tile(batch['goals'], (10,1,1)), method='target_qf')
-    next_q1, next_q2 = jnp.max(next_q1, axis=0), jnp.max(next_q2, axis=0)
+    next_q_ = jnp.minimum(next_q1, next_q2)
     
-    next_q = jnp.minimum(next_q1, next_q2)
+    max_q_index = jnp.argmax(next_q_, axis=0)
+    next_q_max = jnp.take_along_axis(next_q_.transpose(1,0), jnp.expand_dims(max_q_index, axis=-1), axis=-1) 
+    next_log_pi_max = jnp.take_along_axis(next_log_pi.transpose(1,0), jnp.expand_dims(max_q_index, axis=-1), axis=-1) 
+    
+    # entropy 
+    # log_alpha = agent.network(method='log_alpha')
+    # alpha = jnp.exp(log_alpha)
+    # next_q = next_q_max - alpha * next_log_pi_max
+    
+    # no entropy
+    next_q = next_q_max
     
     target_q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
     target_q = jax.lax.stop_gradient(target_q)
@@ -181,58 +192,61 @@ def compute_qf_loss(agent, batch, network_params):
 
     q_loss1 = jnp.square(q1 - target_q).mean()
     q_loss2 = jnp.square(q2 - target_q).mean()
-
+    q_loss = q_loss1 + q_loss2
 
     # cql loss
-    batch_size = batch['observations'].shape[0]
-    # dimension : (batch_size, cql_n_actions, obs_dim)
-    observations =  extend_and_repeat(batch['observations'], 1, agent.config['cql_n_actions'])
-    next_observations =  extend_and_repeat(batch['next_observations'], 1, agent.config['cql_n_actions'])
-    goals =  extend_and_repeat(batch['goals'], 1, agent.config['cql_n_actions'])
+    # batch_size = batch['observations'].shape[0]
+    # # dimension : (batch_size, cql_n_actions, obs_dim)
+    # observations =  extend_and_repeat(batch['observations'], 1, agent.config['cql_n_actions'])
+    # next_observations =  extend_and_repeat(batch['next_observations'], 1, agent.config['cql_n_actions'])
+    # goals =  extend_and_repeat(batch['goals'], 1, agent.config['cql_n_actions'])
     
-    # random actions : (batch_size, cql_n_actions, action_dim)
-    cql_random_actions = jax.random.uniform(key=agent.rng, shape=(batch_size, agent.config['cql_n_actions'], agent.config['action_dim']), minval=agent.config['action_min'], maxval=agent.config['action_max'])
-    agent = agent.replace(rng = jax.random.split(agent.rng, 1)[0])
+    # # random actions : (batch_size, cql_n_actions, action_dim)
+    # cql_random_actions = jax.random.uniform(key=agent.rng, shape=(batch_size, agent.config['cql_n_actions'], agent.config['action_dim']), minval=agent.config['action_min'], maxval=agent.config['action_max'])
+    # agent = agent.replace(rng = jax.random.split(agent.rng, 1)[0])
     
-    cur_dist = agent.network(observations, goals, state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
-    cql_current_actions, cql_current_log_pi = supply_rng(cur_dist.sample_and_log_prob)()
+    # cur_dist = agent.network(observations, goals, state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
+    # cql_current_actions, cql_current_log_pi = supply_rng(cur_dist.sample_and_log_prob)()
     
-    next_dist = agent.network(next_observations, goals, state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
-    cql_next_actions, cql_next_log_pi = supply_rng(next_dist.sample_and_log_prob)()
+    # next_dist = agent.network(next_observations, goals, state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
+    # cql_next_actions, cql_next_log_pi = supply_rng(next_dist.sample_and_log_prob)()
     
     
-    cql_q1_rand, cql_q2_rand = agent.network(observations, cql_random_actions, goals, method='qf', params=network_params)
-    cql_q1_current_actions, cql_q2_current_actions = agent.network(observations, cql_current_actions, goals, method='qf', params=network_params)
-    cql_q1_next_actions, cql_q2_next_actions = agent.network(observations, cql_next_actions, goals, method='qf', params=network_params)
+    # cql_q1_rand, cql_q2_rand = agent.network(observations, cql_random_actions, goals, method='qf', params=network_params)
+    # cql_q1_current_actions, cql_q2_current_actions = agent.network(observations, cql_current_actions, goals, method='qf', params=network_params)
+    # cql_q1_next_actions, cql_q2_next_actions = agent.network(observations, cql_next_actions, goals, method='qf', params=network_params)
     
-    # importance sample
-    random_density = jnp.log(0.5 ** agent.config['action_dim'])
-    cql_cat_q1 = jnp.concatenate([cql_q1_rand - random_density, cql_q1_next_actions - cql_next_log_pi , cql_q1_current_actions - cql_current_log_pi], axis=1)
-    cql_cat_q2 = jnp.concatenate([cql_q2_rand - random_density, cql_q2_next_actions - cql_next_log_pi, cql_q2_current_actions - cql_current_log_pi], axis=1)
+    # # importance sample
+    # random_density = jnp.log(0.5 ** agent.config['action_dim'])
+    # cql_cat_q1 = jnp.concatenate([cql_q1_rand - random_density, cql_q1_next_actions - cql_next_log_pi , cql_q1_current_actions - cql_current_log_pi], axis=1)
+    # cql_cat_q2 = jnp.concatenate([cql_q2_rand - random_density, cql_q2_next_actions - cql_next_log_pi, cql_q2_current_actions - cql_current_log_pi], axis=1)
 
-    cql_qf1_ood = (jax.scipy.special.logsumexp(cql_cat_q1 / agent.config['cql_temp'], axis=1)* agent.config['cql_temp'])
-    cql_qf2_ood = (jax.scipy.special.logsumexp(cql_cat_q2 / agent.config['cql_temp'], axis=1)* agent.config['cql_temp'])
+    # cql_qf1_ood = (jax.scipy.special.logsumexp(cql_cat_q1 / agent.config['cql_temp'], axis=1)* agent.config['cql_temp'])
+    # cql_qf2_ood = (jax.scipy.special.logsumexp(cql_cat_q2 / agent.config['cql_temp'], axis=1)* agent.config['cql_temp'])
     
-    cql_qf1_diff = jnp.clip(cql_qf1_ood - q1.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
-    cql_qf2_diff = jnp.clip(cql_qf2_ood - q2.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+    # cql_qf1_diff = jnp.clip(cql_qf1_ood - q1.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
+    # cql_qf2_diff = jnp.clip(cql_qf2_ood - q2.mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
     
-    # low alpha prime
-    log_low_alpha_prime = agent.network(method='log_alpha_prime')
-    low_alpha_prime = jnp.clip(jnp.exp(log_low_alpha_prime), 0.0, 1e6)
-    low_alpha_prime = jax.lax.stop_gradient(low_alpha_prime)
+    # # low alpha prime
+    # log_low_alpha_prime = agent.network(method='log_alpha_prime')
+    # low_alpha_prime = jnp.clip(jnp.exp(log_low_alpha_prime), 0.0, 1e6)
+    # # low_alpha_prime = jax.lax.stop_gradient(low_alpha_prime)
     
     
-    cql_min_qf1_loss = low_alpha_prime * cql_qf1_diff
-    cql_min_qf2_loss = low_alpha_prime * cql_qf2_diff
+    # cql_min_qf2_loss = low_alpha_prime * (cql_qf2_diff - agent.config['cql_low_target_action_gap'])
+    # cql_min_qf1_loss = low_alpha_prime * (cql_qf1_diff - agent.config['cql_low_target_action_gap'])
                     
-    qf1_loss = q_loss1 + cql_min_qf1_loss
-    qf2_loss = q_loss2 + cql_min_qf2_loss
+    # qf1_loss = q_loss1 + cql_min_qf1_loss
+    # qf2_loss = q_loss2 + cql_min_qf2_loss
     
-    q_loss = qf1_loss + qf2_loss 
+    # low_alpha_prime_loss = (-cql_min_qf1_loss - cql_min_qf2_loss) * 0.5
     
-    # for alpha prime update
-    batch['low_cql_qf1_diff'] = cql_qf1_diff
-    batch['low_cql_qf2_diff'] = cql_qf2_diff
+    # q_loss = qf1_loss + qf2_loss + low_alpha_prime_loss
+    # # q_loss = qf1_loss + qf2_loss 
+    
+    # # for alpha prime update
+    # batch['cql_qf2_diff'] = cql_qf2_diff - agent.config['cql_low_target_action_gap']
+    # batch['cql_qf1_diff'] = cql_qf1_diff - agent.config['cql_low_target_action_gap']
     
     return q_loss, {
         'q_loss': q_loss,
@@ -240,13 +254,15 @@ def compute_qf_loss(agent, batch, network_params):
         'q min': q1.min(),
         'q mean': q1.mean(),
         'q bellman loss': q_loss1.mean(),
-        'q cql_qf_diff': cql_qf1_diff.mean(),
-        'q cql_min_qf_loss': cql_min_qf1_loss.mean(),
-        'q cql_qf_ood': cql_qf1_ood.mean(),
-        'q cql_q_rand': cql_q1_rand.mean(),
-        'q cql_q_current_actions': cql_q1_current_actions.mean(),
-        'q cql_q_next_actions': cql_q1_next_actions.mean(),
-        'low_alpha_prime': low_alpha_prime,
+        # 'q cql_qf_diff': cql_qf1_diff.mean(),
+        # 'q cql_min_qf_loss': cql_min_qf1_loss.mean(),
+        # 'q cql_qf_ood': cql_qf1_ood.mean(),
+        # 'q cql_q_rand': cql_q1_rand.mean(),
+        # 'q cql_q_current_actions': cql_q1_current_actions.mean(),
+        # 'q cql_q_next_actions': cql_q1_next_actions.mean(),
+        # 'low_alpha_prime': low_alpha_prime,
+        # 'low_alpha_prime_loss' : low_alpha_prime_loss
+        
 
         
     }
@@ -260,14 +276,24 @@ def compute_high_qf_loss(agent, batch, network_params):
     
 
     # sac-q loss
+    # max target back up
     next_dist = agent.network(batch['high_targets'], batch['high_goals'], state_rep_grad=True, goal_rep_grad=False, method='high_actor')
     next_actions, next_log_pi = supply_rng(next_dist.sample_and_log_prob)(sample_shape=10)
     
-    # max target back up
     (next_q1, next_q2) = agent.network(jnp.tile(batch['high_targets'], (10,1,1)), next_actions, jnp.tile(batch['high_goals'], (10,1,1)), method='high_target_qf')
-    next_q1, next_q2 = jnp.max(next_q1, axis=0), jnp.max(next_q2, axis=0)
+    next_q_ = jnp.minimum(next_q1, next_q2)
     
-    next_q = jnp.minimum(next_q1, next_q2)
+    max_q_index = jnp.argmax(next_q_, axis=0)
+    next_q_max = jnp.take_along_axis(next_q_.transpose(1,0), jnp.expand_dims(max_q_index, axis=-1), axis=-1) 
+    next_log_pi_max = jnp.take_along_axis(next_log_pi.transpose(1,0), jnp.expand_dims(max_q_index, axis=-1), axis=-1) 
+    
+    # entropy 
+    # log_alpha = agent.network(method='high_log_alpha')
+    # alpha = jnp.exp(log_alpha)
+    # next_q = next_q_max - alpha * next_log_pi_max
+    
+    # no entropy
+    next_q = next_q_max
     
     target_q = batch['high_rewards'] + agent.config['discount'] * batch['high_masks'] * next_q
     target_q = jax.lax.stop_gradient(target_q)
@@ -324,20 +350,21 @@ def compute_high_qf_loss(agent, batch, network_params):
     log_high_alpha_prime = agent.network(method='high_log_alpha_prime')
     high_alpha_prime = jnp.clip(jnp.exp(log_high_alpha_prime), 0.0, 1e6)
     
-    high_alpha_prime = jax.lax.stop_gradient(high_alpha_prime)
+    # high_alpha_prime = jax.lax.stop_gradient(high_alpha_prime)
     
-    cql_min_qf1_loss = high_alpha_prime * cql_qf1_diff
-    cql_min_qf2_loss = high_alpha_prime * cql_qf2_diff
+    cql_min_qf1_loss = high_alpha_prime * (cql_qf1_diff - agent.config['cql_high_target_action_gap'])
+    cql_min_qf2_loss = high_alpha_prime * (cql_qf2_diff - agent.config['cql_high_target_action_gap'])
                     
     qf1_loss = q_loss1 + cql_min_qf1_loss
     qf2_loss = q_loss2 + cql_min_qf2_loss
     
-    # q_loss = qf1_loss + qf2_loss + high_alpha_prime_loss
-    q_loss = qf1_loss + qf2_loss 
+    high_alpha_prime_loss = (-cql_min_qf1_loss - cql_min_qf2_loss) * 0.5
+    
+    q_loss = qf1_loss + qf2_loss + high_alpha_prime_loss
     
     # for alpha prime update
-    batch['high_cql_qf2_diff'] = cql_qf2_diff
-    batch['high_cql_qf1_diff'] = cql_qf1_diff
+    batch['cql_qf1_diff'] = cql_qf1_diff - agent.config['cql_high_target_action_gap']
+    batch['cql_qf2_diff'] = cql_qf2_diff - agent.config['cql_high_target_action_gap']
     
     
     # q_loss = q_loss1 + q_loss2 
@@ -357,32 +384,33 @@ def compute_high_qf_loss(agent, batch, network_params):
         'q cql_q_current_actions': cql_q1_current_actions.mean(),
         'q cql_q_next_actions': cql_q1_next_actions.mean(),
         'high_alpha_prime': high_alpha_prime,
+        'high_alpha_prime_loss' : high_alpha_prime_loss
     }
     
 def compute_low_alpha_loss(agent, batch, network_params):
     # low log alpha
-    dist = agent.network(batch['observations'], batch['goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
-    actions, low_log_pi = supply_rng(dist.sample_and_log_prob)()
-    # low_log_pi = jax.lax.stop_gradient(batch['low_log_pi'])
+    # dist = agent.network(batch['observations'], batch['goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
+    # actions, low_log_pi = supply_rng(dist.sample_and_log_prob)()
+    low_log_pi = jax.lax.stop_gradient(batch['low_log_pi'])
     
     log_alpha = agent.network(method='log_alpha', params=network_params)
-    # low_alpha_loss = -log_alpha * (low_log_pi + agent.config['target_entropy']).mean()
-    low_alpha_loss = -log_alpha * (low_log_pi).mean()
+    low_alpha_loss = -log_alpha * (low_log_pi + agent.config['target_entropy']).mean()
+    # low_alpha_loss = -log_alpha * (low_log_pi).mean()
     
     return low_alpha_loss, {
         'low_alpha_loss': low_alpha_loss,
-        'alpha' : jnp.exp(log_alpha),
+        'low_alpha' : jnp.exp(log_alpha),
         }
 
 def compute_high_alpha_loss(agent, batch, network_params):
     # high log alpha
-    high_dist = agent.network(batch['observations'], batch['high_goals'], state_rep_grad=True, goal_rep_grad=False, method='high_actor')
-    actions, high_log_pi = supply_rng(high_dist.sample_and_log_prob)()
-    # high_log_pi = jax.lax.stop_gradient(batch['high_log_pi'])
+    # high_dist = agent.network(batch['observations'], batch['high_goals'], state_rep_grad=True, goal_rep_grad=False, method='high_actor')
+    # actions, high_log_pi = supply_rng(high_dist.sample_and_log_prob)()
+    high_log_pi = jax.lax.stop_gradient(batch['high_log_pi'])
     
     log_high_alpha = agent.network(method='high_log_alpha', params=network_params)
     # high_alpha_loss = -log_high_alpha * (high_log_pi + agent.config['high_target_entropy']).mean()
-    high_alpha_loss = -log_high_alpha * (high_log_pi).mean()
+    high_alpha_loss = -log_high_alpha * (high_log_pi + agent.config['high_target_entropy']).mean()
     
     return high_alpha_loss, {
         'high_alpha_loss': high_alpha_loss,
@@ -390,32 +418,32 @@ def compute_high_alpha_loss(agent, batch, network_params):
         }
     
 def compute_low_alpha_prime_loss(agent, batch, network_params):
-    low_cql_qf1_diff = jax.lax.stop_gradient(batch['low_cql_qf1_diff'])
-    low_cql_qf2_diff = jax.lax.stop_gradient(batch['low_cql_qf2_diff'])
+    cql_qf1_diff = jax.lax.stop_gradient(batch['cql_qf1_diff'])
+    cql_qf2_diff = jax.lax.stop_gradient(batch['cql_qf2_diff'])
     
     # high alpha prime
     log_alpha_prime = agent.network(method='log_alpha_prime', params=network_params)
+    alpha = jnp.clip(jnp.exp(log_alpha_prime), 0, 1e6)
+    cql_min_qf1_loss = alpha * cql_qf1_diff
+    cql_min_qf2_loss = alpha * cql_qf2_diff
     
-    cql_min_qf1_loss = low_cql_qf1_diff
-    cql_min_qf2_loss = low_cql_qf2_diff
-                    
-    low_alpha_prime_loss = - log_alpha_prime * (cql_min_qf1_loss + cql_min_qf2_loss)*0.5
+    low_alpha_prime_loss = (-cql_min_qf1_loss - cql_min_qf2_loss)*0.5
     
     return low_alpha_prime_loss , {
         'low_alpha_prime' : jnp.exp(log_alpha_prime)
     }
 
 def compute_high_alpha_prime_loss(agent, batch, network_params):
-    high_cql_qf1_diff = jax.lax.stop_gradient(batch['high_cql_qf1_diff'])
-    high_cql_qf2_diff = jax.lax.stop_gradient(batch['high_cql_qf2_diff'])
+    cql_qf1_diff = jax.lax.stop_gradient(batch['cql_qf1_diff'])
+    cql_qf2_diff = jax.lax.stop_gradient(batch['cql_qf2_diff'])
     
     # high alpha prime
     log_high_alpha_prime = agent.network(method='high_log_alpha_prime', params=network_params)
+    alpha = jnp.clip(jnp.exp(log_high_alpha_prime), 0, 1e6)
+    cql_min_qf1_loss = alpha * cql_qf1_diff
+    cql_min_qf2_loss = alpha * cql_qf2_diff
     
-    cql_min_qf1_loss = high_cql_qf1_diff
-    cql_min_qf2_loss =  high_cql_qf2_diff
-                    
-    high_alpha_prime_loss = - log_high_alpha_prime * (cql_min_qf1_loss + cql_min_qf2_loss)*0.5
+    high_alpha_prime_loss =  (-cql_min_qf1_loss - cql_min_qf2_loss)*0.5
     
     return high_alpha_prime_loss , {
         'high_alpha_prime' : jnp.exp(log_high_alpha_prime)
@@ -638,15 +666,7 @@ class JointTrainAgent(flax.struct.PyTreeNode):
         # additional update
         new_params = unfreeze(agent.network.params)
         
-        # # low alpha update
-        # network, low_alpha_info = agent.network.apply_loss_fn(loss_fn=low_alpha_loss_fn, has_aux=True)
-        # info.update(low_alpha_info)
-        # new_params['networks_log_alpha'] = network.params['networks_log_alpha']
-        
-        # # high alpha update
-        # network, high_alpha_info = agent.network.apply_loss_fn(loss_fn=high_alpha_loss_fn, has_aux=True)
-        # info.update(high_alpha_info)
-        # new_params['networks_high_log_alpha'] = network.params['networks_high_log_alpha']
+
         
         # HILP update
         # if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
@@ -675,7 +695,18 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             info.update(high_alpha_prime_info)
             new_params['networks_high_log_alpha_prime'] = network.params['networks_high_log_alpha_prime']
             
+            # low alpha update
+            # network, low_alpha_info = agent.network.apply_loss_fn(loss_fn=low_alpha_loss_fn, has_aux=True)
+            # info.update(low_alpha_info)
+            # new_params['networks_log_alpha'] = network.params['networks_log_alpha']
+            
+            # high alpha update
+            # network, high_alpha_info = agent.network.apply_loss_fn(loss_fn=high_alpha_loss_fn, has_aux=True)
+            # info.update(high_alpha_info)
+            # new_params['networks_high_log_alpha'] = network.params['networks_high_log_alpha']
+            
             new_network = new_network.replace(params=freeze(new_params))
+            # pass
         
         return agent.replace(network=new_network), info
         # return agent.replace(params=freeze(new_params)), info
@@ -781,7 +812,7 @@ def create_learner(
         high_alpha_multiplier = 1,
         alpha_multiplier = 1,
         cql_low_target_action_gap = 1,
-        cql_high_target_action_gap = 1,        
+        cql_high_target_action_gap = 2,        
         **kwargs):
 
         print('Extra kwargs:', kwargs)

@@ -113,6 +113,10 @@ class GCSDataset(GCDataset):
         batch = self.dataset.sample(batch_size, indx)
         # goal for value function training
         goal_indx = self.sample_goals(indx)
+        
+        relable = (np.random.rand(batch_size) < self.high_p_relable)
+        goal_indx = np.where(relable, indx, goal_indx)
+            
         success = (indx == goal_indx)
         batch['rewards'] = success.astype(float) * self.reward_scale + self.reward_shift
 
