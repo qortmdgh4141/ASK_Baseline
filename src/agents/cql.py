@@ -24,7 +24,7 @@ def expectile_loss(adv, diff, expectile=0.7):
     weight = jnp.where(adv >= 0, expectile, (1 - expectile))
     return weight * (diff**2)
 
-def compute_kl(post_mean, post_std, prior_mean, prior_std=1):
+def compute_kl(post_mean, post_std, prior_mean, prior_std=1e-3):
     kl = jnp.log(prior_std) - jnp.log(post_std) + 0.5 * ((post_std**2 + (post_mean - prior_mean)**2) / prior_std**2 - 1)
     return jnp.mean(kl, axis=-1)
 
@@ -148,7 +148,7 @@ def compute_high_actor_loss(agent, batch, network_params):
     v = jax.lax.stop_gradient(v)
     # actor_loss = (-v + alpha*mse_loss).mean()
 
-    kl_loss = compute_kl(dist.loc, dist.scale_diag, target, prior_std=1)
+    kl_loss = compute_kl(dist.loc, dist.scale_diag, target)
     # compute_kl(post_mean, post_std, prior_mean, prior_std=1)
     actor_loss = (-v + alpha*kl_loss).mean()
     
