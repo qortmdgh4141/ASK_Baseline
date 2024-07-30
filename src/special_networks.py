@@ -111,12 +111,16 @@ class MonolithicQF(nn.Module):
         repr_class = LayerNormRepresentation if self.use_layer_norm else Representation
         self.q_net = repr_class((*self.hidden_dims, 1), activate_final=False)
 
-    def __call__(self, observations, actions, goals=None, info=False):
+    def __call__(self, observations, actions, subgoals=None, goals=None, info=False):
         phi = observations
         pi = actions
-        psi = goals
-
-        q1, q2 = self.q_net(jnp.concatenate([phi, pi, psi], axis=-1)).squeeze(-1)
+        psi = subgoals
+        p = goals
+        if goals is not None:
+            q1, q2 = self.q_net(jnp.concatenate([phi, pi, psi, p], axis=-1)).squeeze(-1)
+        else:
+            q1, q2 = self.q_net(jnp.concatenate([phi, pi, psi], axis=-1)).squeeze(-1)
+            
 
         if info:
             return {
@@ -338,17 +342,23 @@ class HierarchicalActorCritic_HCQL(nn.Module):
     flag: Any = None
 # ---------------------------------------------------------------------------------------------------------------    
     # HCQL
-    def qf(self, observations, actions, goals, **kwargs):
+    def qf(self, observations, actions, subgoals, goals, **kwargs):
         # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
         state_reps = get_rep(self.encoders['qf_state'], targets=observations)
         goal_reps = get_rep(self.encoders['qf_goal'], targets=goals, bases=observations)
-        return self.networks['qf'](state_reps, actions, goal_reps, **kwargs)
+        if self.flag.final_goal:
+            return self.networks['qf'](state_reps, actions, subgoals, goal_reps, **kwargs)
+        else:
+            return self.networks['qf'](state_reps, actions, goal_reps, **kwargs)
 
-    def target_qf(self, observations, actions, goals, **kwargs):
+    def target_qf(self, observations, actions, subgoals, goals, **kwargs):
         # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"]:
         state_reps = get_rep(self.encoders['qf_state'], targets=observations)
         goal_reps = get_rep(self.encoders['qf_goal'], targets=goals, bases=observations)
-        return self.networks['target_qf'](state_reps, actions, goal_reps, **kwargs)
+        if self.flag.final_goal:
+            return self.networks['target_qf'](state_reps, actions, subgoals, goal_reps, **kwargs)
+        else:
+            return self.networks['target_qf'](state_reps, actions, goal_reps, **kwargs)
     
     # hierarcy qf function
     def high_qf(self, observations, actions, goals, **kwargs):
@@ -363,7 +373,7 @@ class HierarchicalActorCritic_HCQL(nn.Module):
         goal_reps = get_rep(self.encoders['high_qf_goal'], targets=goals, bases=observations)
         return self.networks['high_target_qf'](state_rep, actions, goal_reps, **kwargs)
 
-    def actor(self, observations, goals, low_dim_goals=False, state_rep_grad=True, goal_rep_grad=True, **kwargs):
+    def actor(self, observations, subgoals, goals, low_dim_goals=False, state_rep_grad=True, goal_rep_grad=True, **kwargs):
         
         # assert goals.shape[-1] == 3, 'goals dim error'
         
@@ -378,7 +388,10 @@ class HierarchicalActorCritic_HCQL(nn.Module):
             goal_reps = get_rep(self.encoders['qf_goal'], targets=goals, bases=observations)
             if not goal_rep_grad: # goal_rep_grad=False: low actor때는 업데이트 안함.
                 goal_reps = jax.lax.stop_gradient(goal_reps)
-        return self.networks['actor'](jnp.concatenate([state_reps, goal_reps], axis=-1), **kwargs)
+        if self.flag.final_goal:
+            return self.networks['actor'](jnp.concatenate([state_reps, subgoals, goal_reps], axis=-1), **kwargs)
+        else:
+            return self.networks['actor'](jnp.concatenate([state_reps, goal_reps], axis=-1), **kwargs)
 
     def high_actor(self, observations, goals, state_rep_grad=True, goal_rep_grad=True, **kwargs):
         state_reps = get_rep(self.encoders['high_policy_state'], targets=observations)
@@ -483,11 +496,24 @@ class HierarchicalActorCritic_HCQL(nn.Module):
         #         'high_actor': self.high_actor(observations, goals),
         #         'log_alpha': self.log_alpha()
         #     }
-        
-        # else:
-        rets = {
-            # 'vae_state_encoder' : self.vae_state_encoder(base_observations), 
-            # 'vae_state_decoder' : self.vae_state_decoder(latent), 
+        if self.flag.final_goal:
+            rets = {
+                
+                'hilp_value': self.hilp_value(observations, goals), 
+                'hilp_target_value': self.hilp_target_value(observations, goals),
+                'high_qf' : self.high_qf(observations, observations, goals), 
+                'high_target_qf' : self.high_target_qf(observations, observations, goals), 
+                'qf': self.qf(observations, actions, goals, goals),
+                'target_qf': self.target_qf(observations, actions, goals, goals),
+                'actor': self.actor(observations, goals, goals),
+                'high_actor': self.high_actor(observations, goals),
+                'log_alpha' : self.log_alpha(),
+                'high_log_alpha' : self.high_log_alpha(),
+                'log_alpha_prime' : self.log_alpha_prime(),
+                'high_log_alpha_prime' : self.high_log_alpha_prime(),
+            }
+        else:
+            rets = {
             
             'hilp_value': self.hilp_value(observations, goals), 
             'hilp_target_value': self.hilp_target_value(observations, goals),
@@ -502,10 +528,6 @@ class HierarchicalActorCritic_HCQL(nn.Module):
             'log_alpha_prime' : self.log_alpha_prime(),
             'high_log_alpha_prime' : self.high_log_alpha_prime(),
         }
-            
-        # if self.flag.value_function_num =="hierarchy":
-        #     rets['high_qf_goal_encoder'] =  self.high_qf_goal_encoder(observations, goals)
-        #     rets['high_qf'] =  self.high_qf(observations, goals)
-        #     rets['high_target_qf'] =  self.high_target_qf(observations, goals)
+
                                 
         return rets

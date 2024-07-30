@@ -203,6 +203,7 @@ def main(_):
     FLAGS.gcdataset['geom_sample'] = FLAGS.geom_sample
     FLAGS.gcdataset['discount'] = FLAGS.discount
     FLAGS.gcdataset['way_steps'] = FLAGS.way_steps
+    FLAGS.gcdataset['final_goal'] = FLAGS.final_goal
     
     FLAGS.gcdataset['keynode_ratio'] = FLAGS.keynode_ratio
   
@@ -458,7 +459,7 @@ def main(_):
     last_time = time.time()
     
     
-    if True:
+    if False:
         if 'antmaze' in FLAGS.env_name:
             load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/ant_hilp_64.pkl'
         elif 'kitchen' in FLAGS.env_name:
@@ -472,12 +473,12 @@ def main(_):
     
     if 'ask' in FLAGS.algo_name or 'cql' in FLAGS.algo_name:
         if load_file is None:
-            hilp_train_steps = int(1*10**5 + 1)
+            hilp_train_steps = int(2*10**3 + 1)
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
                         smoothing=0.1,
                         dynamic_ncols=True):
-                pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size, hilp=True)
+                pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
                 agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, hilp_update=True)
                 if i % FLAGS.log_interval == 0:
                     train_metrics = {f'training/{k}': v for k, v in update_info.items()}
@@ -522,21 +523,21 @@ def main(_):
         hilp_fn = jax.jit(agent.get_hilp_phi)
         agent = agent.replace(key_nodes=key_nodes.centroids)
         
-        if FLAGS.kl_loss or FLAGS.mse_loss or FLAGS.high_action_in_hilp or 'cql' in FLAGS.algo_name:
-            # add keynode in pretrain_dataset
-            find_key_node_in_dataset = key_nodes.find_key_node_in_dataset
-            # key_node, letent_key_node = d4rl_utils.get_latent_key_nodes(find_key_node_in_dataset, hilp_observations, FLAGS)
-            if FLAGS.high_action_in_hilp:
-                # dataset = d4rl_utils.add_data(dataset, key_node=letent_key_node, rep_observations=hilp_observations)
-                dataset = dataset.copy({'rep_observations' : hilp_observations})
-            else:
-                # dataset = d4rl_utils.add_data(dataset, key_node=key_node)
-                dataset = dataset.copy({'key_node' : key_nodes.matched_keynode_in_raw})
-                dataset = dataset.copy({'rep_observations' : hilp_observations})
-                
-            pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
+        # if FLAGS.kl_loss or FLAGS.mse_loss or FLAGS.high_action_in_hilp or 'cql' in FLAGS.algo_name:
+        # add keynode in pretrain_dataset
+        find_key_node_in_dataset = key_nodes.find_key_node_in_dataset
+        # key_node, letent_key_node = d4rl_utils.get_latent_key_nodes(find_key_node_in_dataset, hilp_observations, FLAGS)
+        if FLAGS.high_action_in_hilp:
+            # dataset = d4rl_utils.add_data(dataset, key_node=letent_key_node, rep_observations=hilp_observations)
+            dataset = dataset.copy({'rep_observations' : hilp_observations})
+        else:
+            # dataset = d4rl_utils.add_data(dataset, key_node=key_node)
+            dataset = dataset.copy({'key_node' : key_nodes.matched_keynode_in_raw})
+            dataset = dataset.copy({'rep_observations' : hilp_observations})
+            
+        pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
 
-        if 'ant' in FLAGS.env_name:
+        if i >= FLAGS.log_interval and 'ant' in FLAGS.env_name:
             
             transition_index = (filtered_transition_index, hlip_filtered_index, dones_indexes)
             pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)

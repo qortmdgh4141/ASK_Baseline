@@ -102,11 +102,11 @@ def evaluate_with_trajectories(
                
             # if h_step == interval or dist < init_dist * 0.5:
             if h_step == interval or step==0:
-                cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=0)
+                cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=eval_temperature)
                 if FLAGS.high_action_in_hilp or 'cql' in FLAGS.algo_name:
                     cur_obs_goal = plot_subgoal = cur_obs_subgoal
                 else:
-                    cur_obs_goal = plot_subgoal = observation + cur_obs_subgoal
+                    cur_obs_goal = plot_subgoal = cur_obs_subgoal
                 if config['use_keynode_in_eval_On']:
                     # cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=0, num_samples=1)
                     if FLAGS.high_action_in_hilp:
@@ -142,7 +142,7 @@ def evaluate_with_trajectories(
         
     
             if FLAGS.final_goal:
-                action = policy_fn(observations=observation, goals=obs_goal, subgoals=cur_obs_goal, low_dim_goals=True, temperature=eval_temperature)
+                action = policy_fn(observations=observation, subgoals=cur_obs_goal, goals=obs_goal, low_dim_goals=True, temperature=eval_temperature)
             else:
                 action = policy_fn(observations=observation, goals=cur_obs_goal, low_dim_goals=True, temperature=eval_temperature)
             

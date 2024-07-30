@@ -107,20 +107,20 @@ def compute_high_actor_loss(agent, batch, network_params):
     
     
     kl_loss = 0
-    if agent.config['kl_loss']:
-        key_node_target = batch['key_node'] - observations
-        key_node_log_probs = dist.log_prob(key_node_target)
-        policy_log_probs = dist.mode()
+    # if agent.config['kl_loss']:
+    #     key_node_target = batch['key_node'] - observations
+    #     key_node_log_probs = dist.log_prob(key_node_target)
+    #     policy_log_probs = dist.mode()
             
-        kl_loss = - (jnp.exp(key_node_log_probs) * (-key_node_log_probs - policy_log_probs)).mean()
+    #     kl_loss = - (jnp.exp(key_node_log_probs) * (-key_node_log_probs - policy_log_probs)).mean()
 
-        log_std_q = dist.log_std()
-        log_std_p = key_node_target
+    #     log_std_q = dist.log_std()
+    #     log_std_p = key_node_target
         
-        std_q = jnp.exp(log_std_q)
-        std_p = jnp.exp(log_std_p)
+    #     std_q = jnp.exp(log_std_q)
+    #     std_p = jnp.exp(log_std_p)
 
-        kl_div = log_std_p - log_std_q + (std_q ** 2 + (means_q - means_p) ** 2) / (2.0 * std_p ** 2) - 0.5
+    #     kl_div = log_std_p - log_std_q + (std_q ** 2 + (means_q - means_p) ** 2) / (2.0 * std_p ** 2) - 0.5
 
         
         

@@ -92,7 +92,7 @@ class GCSDataset(GCDataset):
     high_p_randomgoal: float = 0.
     keynode_ratio: float = 0.5
     high_p_relable : float = 0.
-    # find_key_node_in_dataset : Any = None
+    final_goal : int = 0
     
     @staticmethod
     def get_default_config():
@@ -133,6 +133,8 @@ class GCSDataset(GCDataset):
         # subgoal sampled from its own trajectory for low level training
         way_indx = np.minimum(indx + self.way_steps, final_state_indx)
         batch['low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['observations'])
+        if self.final_goal:
+            batch['final_goals'] = jax.tree_map(lambda arr: arr[final_state_indx], self.dataset['observations'])
         
         if hilp == False:
             # subgoal sampled from its own trajectory with distance ratio for high level training
