@@ -765,6 +765,19 @@ def plot_q_map(agent, base_observation, goal_info, i, g_start_time, pretrain_bat
     
     return value_map
 
+def get_encoder():
+    from transformers import AutoImageProcessor, FlaxResNetModel
+    from functools import partial
+    image_processor = AutoImageProcessor.from_pretrained("microsoft/resnet-50")
+    image_processor = partial(image_processor, return_tensors='jax')
+    model = FlaxResNetModel.from_pretrained("microsoft/resnet-50")
+    
+    from jaxrl_m.networks import nn
+    model_fn = lambda x: model(**x).pooler_output
+    squeeze_fn = lambda x : jnp.squeeze(x, axis=(-1, -2))
+    encoder = nn.Sequential([image_processor, model_fn, squeeze_fn])
+    return encoder
+
 class CsvLogger:
     def __init__(self, path):
         self.path = path

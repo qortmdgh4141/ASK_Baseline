@@ -106,20 +106,37 @@ class MonolithicQF(nn.Module):
     use_layer_norm: bool = True
     # rep_dim: int = None
     obs_rep: int = 0
-
+    bilinear: int = 0
+    q_dim: int = 16
+    
     def setup(self) -> None:
         repr_class = LayerNormRepresentation if self.use_layer_norm else Representation
-        self.q_net = repr_class((*self.hidden_dims, 1), activate_final=False)
-
-    def __call__(self, observations, actions, subgoals=None, goals=None, info=False):
-        phi = observations
-        pi = actions
-        psi = subgoals
-        p = goals
-        if goals is not None:
-            q1, q2 = self.q_net(jnp.concatenate([phi, pi, psi, p], axis=-1)).squeeze(-1)
+        if self.bilinear:
+            self.s_a = repr_class((*self.hidden_dims, self.q_dim), activate_final=False)
+            self.s_g = repr_class((*self.hidden_dims, self.q_dim), activate_final=False)
+            
         else:
-            q1, q2 = self.q_net(jnp.concatenate([phi, pi, psi], axis=-1)).squeeze(-1)
+            self.q_net = repr_class((*self.hidden_dims, 1), activate_final=False)
+    def __call__(self, observations, actions, subgoals=None, goals=None, info=False):
+
+        if self.bilinear:
+            if goals is not None:
+                s_a = self.s_a(jnp.concatenate([observations, actions], axis=-1))
+                s_g = self.s_g(jnp.concatenate([observations, subgoals, goals], axis=-1))
+                
+            else:
+                s_a = self.s_a(jnp.concatenate([observations, actions], axis=-1))
+                s_g = self.s_g(jnp.concatenate([observations, subgoals], axis=-1))
+            
+            einsum_str = 'ijk,ijk->ij' if len(s_a.shape) == 3 else 'ijkl,ijkl->ijk'
+            q1, q2 = -jnp.einsum(einsum_str, s_a, s_g)
+        
+        else:
+            
+            if goals is not None:
+                q1, q2 = self.q_net(jnp.concatenate([observations, actions, subgoals, goals], axis=-1)).squeeze(-1)
+            else:
+                q1, q2 = self.q_net(jnp.concatenate([observations, actions, subgoals], axis=-1)).squeeze(-1)
             
 
         if info:

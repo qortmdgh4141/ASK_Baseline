@@ -16,6 +16,7 @@ from flax.core import freeze, unfreeze
 import ml_collections
 from . import iql
 from src.special_networks import Representation, HierarchicalActorCritic_HCQL, RelativeRepresentation, MonolithicQF, Scalar, HILP_GoalConditionedPhiValue
+from src.utils import get_encoder
 
 def extend_and_repeat(tensor, axis, repeat):
     return jnp.repeat(jnp.expand_dims(tensor, axis), repeat, axis=axis)
@@ -906,7 +907,7 @@ def create_learner(
         high_alpha_multiplier = 1,
         alpha_multiplier = 1,
         cql_low_target_action_gap = 1,
-        cql_high_target_action_gap = 20,
+        cql_high_target_action_gap = 10,
         high_target_divergence = 1,        
         **kwargs):
 
@@ -930,7 +931,8 @@ def create_learner(
             assert use_rep
             from jaxrl_m.vision import encoders
 
-            visual_encoder = encoders[encoder]
+            visual_encoder = get_encoders()
+            
             def make_encoder(bottleneck):
                 if bottleneck:
                     return RelativeRepresentation(rep_dim=rep_dim, hidden_dims=(rep_dim,), visual=True, module=visual_encoder, layer_norm=use_layer_norm, rep_type=flag.rep_type, bottleneck=True)
@@ -955,8 +957,8 @@ def create_learner(
             if use_rep:
                 qf_goal_encoder = make_encoder(bottleneck=True)
 
-        qf_def = MonolithicQF(hidden_dims=qf_hidden_dims, use_layer_norm=use_layer_norm)
-        high_qf_def = MonolithicQF(hidden_dims=qf_hidden_dims, use_layer_norm=use_layer_norm)
+        qf_def = MonolithicQF(hidden_dims=qf_hidden_dims, use_layer_norm=use_layer_norm, bilinear=1)
+        high_qf_def = MonolithicQF(hidden_dims=qf_hidden_dims, use_layer_norm=use_layer_norm, bilinear=1)
         log_alpha = Scalar()
         high_log_alpha = Scalar()
         log_alpha_prime = Scalar()
