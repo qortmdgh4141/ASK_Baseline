@@ -93,6 +93,7 @@ class GCSDataset(GCDataset):
     keynode_ratio: float = 0.5
     high_p_relable : float = 0.
     final_goal : int = 0
+    high_action_in_hilp : int = 0
     
     @staticmethod
     def get_default_config():
@@ -168,11 +169,11 @@ class GCSDataset(GCDataset):
             
             
             if 'key_node' in self.dataset.keys() and self.dataset['key_node'] is not None:
-                batch['high_target_key_node'] = self.dataset['key_node'][high_target_idx]
-                if 'rep_observations' in self.dataset.keys():
-                    batch['rep_low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['rep_observations'])
-                
-
+                batch['high_target_key_node'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['key_node'])
+            if 'rep_observations' in self.dataset.keys() and self.high_action_in_hilp:
+                batch['rep_low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['rep_observations'])
+                batch['rep_high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['rep_observations'])
+            
                 # if self.keynode_ratio:
                 #     index =  int(self.keynode_ratio* batch_size)
                 #     way_index_key_node = way_indx[:index]
@@ -194,6 +195,8 @@ class GCSDataset(GCDataset):
                 # else:
                 #     batch['high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['observations'])
 
+            
+        
         if isinstance(batch['goals'], FrozenDict):
             # Freeze the other observations
             batch['observations'] = freeze(batch['observations'])
