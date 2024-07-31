@@ -104,14 +104,20 @@ def evaluate_with_trajectories(
             # if h_step == interval or step==0:
                 cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=eval_temperature)
                 if FLAGS.high_action_in_hilp or 'cql' in FLAGS.algo_name:
-                    cur_obs_goal = plot_subgoal = cur_obs_subgoal
+                    # cur_obs_goal = plot_subgoal = cur_obs_subgoal
+                    
+                    cur_obs_goal = plot_subgoal = jnp.concatenate([hilp_fn(observations=observation), cur_obs_subgoal], axis=-1)
+                    
                 else:
                     cur_obs_goal = plot_subgoal = cur_obs_subgoal
                 if config['use_keynode_in_eval_On']:
                     # cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=0, num_samples=1)
                     if FLAGS.high_action_in_hilp:
-                        distance, cur_obs_latent_key_node, hilp_subgoal, cur_obs_key_node  = find_key_node(jnp.concatenate([hilp_fn(observations=observation), cur_obs_subgoal], axis=0))
-                        cur_obs_goal = cur_obs_latent_key_node
+                        # distance, cur_obs_latent_key_node, hilp_subgoal, cur_obs_key_node  = find_key_node(jnp.concatenate([hilp_fn(observations=observation), cur_obs_subgoal], axis=0))
+                        # cur_obs_goal = cur_obs_latent_key_node
+                        _, I = index.search(np.array(cur_obs_subgoal, dtype=np.float32).reshape(1,-1), 1)
+                        cur_obs_goal = cur_obs_key_node = jnp.array(nodes.rep_centroids[I[0,0]])                      
+                        
                     else:
                         # distance, _, hilp_subgoal, cur_obs_key_node  = find_key_node(hilp_fn(observations=jnp.vstack([observation, cur_obs_subgoal])).reshape(-1))
                         # if cur_obs_key_node is None:
@@ -121,7 +127,10 @@ def evaluate_with_trajectories(
                         cur_obs_goal = cur_obs_key_node = jnp.array(nodes.centroids[I[0,0]])
                         
                 if FLAGS.relative_dist_in_eval_On:
-                    init_dist = np.linalg.norm(hilp_fn(observations=cur_obs_subgoal) - hilp_fn(observations=observation))
+                    if FLAGS.high_action_in_hilp:
+                        init_dist = np.linalg.norm(cur_obs_subgoal - hilp_fn(observations=observation))
+                    else:
+                        init_dist = np.linalg.norm(hilp_fn(observations=cur_obs_subgoal) - hilp_fn(observations=observation))
                 
 
                 # if config['use_keynode_in_eval_On']:
@@ -136,7 +145,10 @@ def evaluate_with_trajectories(
                 h_step = 0
                 
             if FLAGS.relative_dist_in_eval_On:
-                dist = np.linalg.norm(hilp_fn(observations=cur_obs_subgoal) - hilp_fn(observations=observation))
+                if FLAGS.high_action_in_hilp:
+                    dist = np.linalg.norm(cur_obs_subgoal - hilp_fn(observations=observation))
+                else:
+                    dist = np.linalg.norm(hilp_fn(observations=cur_obs_subgoal) - hilp_fn(observations=observation))
             else:
                 dist = np.linalg.norm(cur_obs_goal[node_dim] - observation[node_dim])
                                        

@@ -25,7 +25,7 @@ from functools import partial
 from src.gc_dataset import GCSDataset
 from src.agents import ask as learner
 from ml_collections import config_flags
-from src.utils import record_video, CsvLogger, plot_value_map, plot_q_map
+from src.utils import record_video, CsvLogger, plot_value_map, plot_q_map, plot_q_map_modified
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
 from src import d4rl_utils, d4rl_ant, ant_diagnostics, viz_utils, keynode_utils
 from src.d4rl_utils import plot_obs
@@ -40,7 +40,7 @@ flags.DEFINE_string('algo_name', 'ask_hilp', '') # 'ask', 'ask_hilp'
 
 flags.DEFINE_integer('gpu', 0, '')
 flags.DEFINE_integer('seed', 0, '')
-flags.DEFINE_integer('batch_size', 256, '')
+flags.DEFINE_integer('batch_size', 1024, '')
 flags.DEFINE_integer('pretrain_steps', 500002, '')
 flags.DEFINE_integer('eval_interval', 100, '')
 flags.DEFINE_integer('save_interval', 100000, '')
@@ -204,6 +204,7 @@ def main(_):
     FLAGS.gcdataset['discount'] = FLAGS.discount
     FLAGS.gcdataset['way_steps'] = FLAGS.way_steps
     FLAGS.gcdataset['final_goal'] = FLAGS.final_goal
+    FLAGS.gcdataset['high_action_in_hilp'] = FLAGS.high_action_in_hilp
     
     FLAGS.gcdataset['keynode_ratio'] = FLAGS.keynode_ratio
   
@@ -473,12 +474,12 @@ def main(_):
     
     if 'ask' in FLAGS.algo_name or 'cql' in FLAGS.algo_name:
         if load_file is None:
-            hilp_train_steps = int(2*10**3 + 1)
+            hilp_train_steps = int(2*10**5 + 1)
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
                         smoothing=0.1,
                         dynamic_ncols=True):
-                pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
+                pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size*2)
                 agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, hilp_update=True)
                 if i % FLAGS.log_interval == 0:
                     train_metrics = {f'training/{k}': v for k, v in update_info.items()}
@@ -530,6 +531,8 @@ def main(_):
         if FLAGS.high_action_in_hilp:
             # dataset = d4rl_utils.add_data(dataset, key_node=letent_key_node, rep_observations=hilp_observations)
             dataset = dataset.copy({'rep_observations' : hilp_observations})
+            agent = agent.replace(config=agent.config.copy({'rep_observation_min':jnp.min(hilp_observations, axis=0), 'rep_observation_max':jnp.max(hilp_observations, axis=0), }))
+
         else:
             # dataset = d4rl_utils.add_data(dataset, key_node=key_node)
             dataset = dataset.copy({'key_node' : key_nodes.matched_keynode_in_raw})
@@ -603,7 +606,10 @@ def main(_):
                 eval_metrics['value_map'] = wandb.Image(value_map)
                 
             elif 'ant' in FLAGS.env_name and 'cql' in FLAGS.algo_name:
-                q_map = plot_q_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
+                if FLAGS.high_action_in_hilp:
+                    q_map = plot_q_map_modified(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
+                else:
+                    q_map = plot_q_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
                 eval_metrics['q_map'] = wandb.Image(q_map)
                 
             # traj_metrics = get_traj_v(agent, example_trajectory)

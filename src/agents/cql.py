@@ -24,7 +24,7 @@ def expectile_loss(adv, diff, expectile=0.7):
     weight = jnp.where(adv >= 0, expectile, (1 - expectile))
     return weight * (diff**2)
 
-def compute_kl(post_mean, post_std, prior_mean, prior_std=1e-3):
+def compute_kl(post_mean, post_std, prior_mean, prior_std=1):
     kl = jnp.log(prior_std) - jnp.log(post_std) + 0.5 * ((post_std**2 + (post_mean - prior_mean)**2) / prior_std**2 - 1)
     return jnp.mean(kl, axis=-1)
 
@@ -42,33 +42,41 @@ def compute_actor_loss(agent, batch, network_params):
     
     # batch['low_log_pi'] = log_pi
     
+    if agent.config['high_action_in_hilp']:
+        # subgoals = (batch['rep_low_goals'] - batch['rep_observations']) / jnp.linalg.norm(batch['rep_low_goals'] - batch['rep_observations'], axis=-1, keepdims=True)
+        subgoals = jnp.concatenate([batch['rep_observations'], batch['rep_low_goals']], axis=1)
+        
+    else:
+        subgoals = batch['low_goals']
+        
+    
     # next q
     if agent.config['final_goal']:
-        next_dist = agent.network(batch['observations'], batch['low_goals'], batch['final_goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
+        next_dist = agent.network(batch['next_observations'], subgoals, batch['final_goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
         next_new_actions, next_log_pi = supply_rng(next_dist.sample_and_log_prob)()
         
-        next_q1, next_q2 = agent.network(batch['next_observations'], next_new_actions, batch['low_goals'], batch['final_goals'], method='qf')
+        next_q1, next_q2 = agent.network(batch['next_observations'], next_new_actions, subgoals, batch['final_goals'], method='qf')
         next_q = jnp.minimum(next_q1, next_q2)
         q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
         
         # cur q    
-        dist = agent.network(batch['observations'], batch['low_goals'], batch['final_goals'],state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
+        dist = agent.network(batch['observations'], subgoals, batch['final_goals'],state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
         new_actions, log_pi = supply_rng(dist.sample_and_log_prob)()
         
-        v1, v2 = agent.network(batch['observations'], new_actions, batch['low_goals'], batch['final_goals'], method='qf')
+        v1, v2 = agent.network(batch['observations'], new_actions, subgoals, batch['final_goals'], method='qf')
     else:
-        next_dist = agent.network(batch['observations'], batch['low_goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
+        next_dist = agent.network(batch['next_observations'], subgoals, state_rep_grad=True, goal_rep_grad=False, method='actor')
         next_new_actions, next_log_pi = supply_rng(next_dist.sample_and_log_prob)()
         
-        next_q1, next_q2 = agent.network(batch['next_observations'], next_new_actions, batch['low_goals'], method='qf')
+        next_q1, next_q2 = agent.network(batch['next_observations'], next_new_actions, subgoals, method='qf')
         next_q = jnp.minimum(next_q1, next_q2)
         q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
         
         # cur q    
-        dist = agent.network(batch['observations'], batch['low_goals'], state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
+        dist = agent.network(batch['observations'], subgoals, state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
         new_actions, log_pi = supply_rng(dist.sample_and_log_prob)()
         
-        v1, v2 = agent.network(batch['observations'], new_actions, batch['low_goals'], method='qf')
+        v1, v2 = agent.network(batch['observations'], new_actions, subgoals, method='qf')
         
     v = jnp.minimum(v1, v2)
     
@@ -139,16 +147,20 @@ def compute_high_actor_loss(agent, batch, network_params):
     # exp_a = jax.lax.stop_gradient(exp_a)
     
     # mse loss
-    if agent.config['key_node_train']:
+    if agent.config['high_action_in_hilp']:
+        target = batch['rep_high_targets']
+        # target = jnp.concatenate([batch['rep_observations'], batch['rep_low_goals']], axis=-1)
+        # target = (batch['rep_low_goals'] - batch['rep_observations']) / jnp.linalg.norm(batch['rep_low_goals'] - batch['rep_observations'], axis=-1, keepdims=True)
+    elif agent.config['key_node_train']:
         target = batch['high_target_key_node']
     else:
         target = batch['high_targets']
     # mse_loss = jnp.square(new_actions - target).mean()
     # actor_loss = (exp_a * mse_loss).mean()
-    v = jax.lax.stop_gradient(v)
+    # v = jax.lax.stop_gradient(v)
     # actor_loss = (-v + alpha*mse_loss).mean()
 
-    kl_loss = compute_kl(dist.loc, dist.scale_diag, target)
+    kl_loss = compute_kl(dist.loc, dist.scale_diag, target, prior_std=1)
     # compute_kl(post_mean, post_std, prior_mean, prior_std=1)
     actor_loss = (-v + alpha*kl_loss).mean()
     
@@ -189,12 +201,20 @@ def compute_qf_loss(agent, batch, network_params):
 
     # sac-q loss
     # max target back up
+    if agent.config['high_action_in_hilp']:
+        # subgoals = batch['rep_low_goals'] - batch['rep_observations']
+        # subgoals = (batch['rep_low_goals'] - batch['rep_observations']) / jnp.linalg.norm(batch['rep_low_goals'] - batch['rep_observations'], axis=-1, keepdims=True)
+        subgoals = jnp.concatenate([batch['rep_observations'], batch['rep_low_goals']], axis=1)
+        
+        
+    else:
+        subgoals = batch['goals']
     
     if agent.config['final_goal']:
-        next_dist = agent.network(batch['next_observations'], batch['goals'], batch['final_goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
+        next_dist = agent.network(batch['next_observations'], subgoals, batch['final_goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
         next_actions, next_log_pi = supply_rng(next_dist.sample_and_log_prob)(sample_shape=10)
         
-        (next_q1, next_q2) = agent.network(jnp.tile(batch['next_observations'], (10,1,1)), next_actions, jnp.tile(batch['goals'], (10,1,1)), jnp.tile(batch['final_goals'], (10,1,1)), method='target_qf')
+        (next_q1, next_q2) = agent.network(jnp.tile(batch['next_observations'], (10,1,1)), next_actions, jnp.tile(subgoals, (10,1,1)), jnp.tile(batch['final_goals'], (10,1,1)), method='target_qf')
         next_q_ = jnp.minimum(next_q1, next_q2)
         
         max_q_index = jnp.argmax(next_q_, axis=0)
@@ -212,13 +232,13 @@ def compute_qf_loss(agent, batch, network_params):
         target_q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
         target_q = jax.lax.stop_gradient(target_q)
 
-        (q1, q2) = agent.network(batch['observations'], batch['actions'], batch['goals'], batch['final_goals'], method='qf', params=network_params)
+        (q1, q2) = agent.network(batch['observations'], batch['actions'], subgoals, batch['final_goals'], method='qf', params=network_params)
     
     else:
-        next_dist = agent.network(batch['next_observations'], batch['goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
+        next_dist = agent.network(batch['next_observations'], subgoals, state_rep_grad=True, goal_rep_grad=False, method='actor')
         next_actions, next_log_pi = supply_rng(next_dist.sample_and_log_prob)(sample_shape=10)
         
-        (next_q1, next_q2) = agent.network(jnp.tile(batch['next_observations'], (10,1,1)), next_actions, jnp.tile(batch['goals'], (10,1,1)), method='target_qf')
+        (next_q1, next_q2) = agent.network(jnp.tile(batch['next_observations'], (10,1,1)), next_actions, jnp.tile(subgoals, (10,1,1)), method='target_qf')
         next_q_ = jnp.minimum(next_q1, next_q2)
         
         max_q_index = jnp.argmax(next_q_, axis=0)
@@ -236,7 +256,7 @@ def compute_qf_loss(agent, batch, network_params):
         target_q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
         target_q = jax.lax.stop_gradient(target_q)
 
-        (q1, q2) = agent.network(batch['observations'], batch['actions'], batch['goals'], method='qf', params=network_params)
+        (q1, q2) = agent.network(batch['observations'], batch['actions'], subgoals, method='qf', params=network_params)
 
     q_loss1 = jnp.square(q1 - target_q).mean()
     q_loss2 = jnp.square(q2 - target_q).mean()
@@ -320,7 +340,11 @@ def compute_high_qf_loss(agent, batch, network_params):
     batch['high_masks'] = 1.0 - batch['high_rewards']
     # rewards are 0 if terminal, -1 otherwise
     batch['high_rewards'] = batch['high_rewards'] - 1.0
-    batch_size, obs_dim = batch['observations'].shape
+    
+    if agent.config['high_action_in_hilp']:
+        batch_size, obs_dim = batch['rep_observations'].shape
+    else:   
+        batch_size, obs_dim = batch['observations'].shape
     
 
     # sac-q loss
@@ -346,7 +370,14 @@ def compute_high_qf_loss(agent, batch, network_params):
     target_q = batch['high_rewards'] + agent.config['discount'] * batch['high_masks'] * next_q
     target_q = jax.lax.stop_gradient(target_q)
 
-    (q1, q2) = agent.network(batch['observations'], batch['high_targets'], batch['high_goals'], method='high_qf', params=network_params)
+    if agent.config['high_action_in_hilp']:
+        # subgoals = (batch['rep_low_goals'] - batch['rep_observations']) / jnp.linalg.norm(batch['rep_low_goals'] - batch['rep_observations'], axis=-1, keepdims=True)
+        rep_high_targets = batch['rep_high_targets']
+        # rep_high_targets = batch['rep_high_targets'] / jnp.linalg.norm(batch['rep_high_targets'], axis=-1, keepdims=True)
+        
+        (q1, q2) = agent.network(batch['observations'], rep_high_targets, batch['high_goals'], method='high_qf', params=network_params)
+    else:
+        (q1, q2) = agent.network(batch['observations'], batch['high_targets'], batch['high_goals'], method='high_qf', params=network_params)
 
     q_loss1 = jnp.square(q1 - target_q).mean()
     q_loss2 = jnp.square(q2 - target_q).mean()
@@ -359,7 +390,12 @@ def compute_high_qf_loss(agent, batch, network_params):
     high_goals =  extend_and_repeat(batch['high_goals'], 1, agent.config['cql_n_actions'])
     
     # random actions : (batch_size, cql_n_actions, action_dim)
-    cql_random_actions = jax.random.uniform(key=agent.rng, shape=(batch_size, agent.config['cql_n_actions'], obs_dim),minval=agent.config['observation_min'], maxval=agent.config['observation_max'])
+    if agent.config['high_action_in_hilp']:
+        # cql_random_actions = jax.random.uniform(key=agent.rng, shape=(batch_size, agent.config['cql_n_actions'], obs_dim),minval=1, maxval=1)
+        cql_random_actions = jax.random.uniform(key=agent.rng, shape=(batch_size, agent.config['cql_n_actions'], obs_dim),minval=agent.config['rep_observation_min'], maxval=agent.config['rep_observation_max'])
+    else:
+        cql_random_actions = jax.random.uniform(key=agent.rng, shape=(batch_size, agent.config['cql_n_actions'], obs_dim),minval=agent.config['observation_min'], maxval=agent.config['observation_max'])
+        
     agent = agent.replace(rng=jax.random.split(agent.rng, 1)[0])
     
     cur_dist = agent.network(observations, high_goals, state_rep_grad=True, goal_rep_grad=False, method='high_actor', params=network_params)
@@ -933,7 +969,7 @@ def create_learner(
             action_dim = actions.shape[-1]
             actor_def = Policy(actor_hidden_dims, action_dim=action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
 
-        high_action_dim = observations.shape[-1] if not use_rep else rep_dim
+        high_action_dim = observations.shape[-1] if not flag.high_action_in_hilp else flag.hilp_skill_dim
         high_actor_def = Policy(actor_hidden_dims, action_dim=high_action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
 
         hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=encoder)

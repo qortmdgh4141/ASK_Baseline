@@ -496,16 +496,21 @@ class HierarchicalActorCritic_HCQL(nn.Module):
         #         'high_actor': self.high_actor(observations, goals),
         #         'log_alpha': self.log_alpha()
         #     }
+        
+        low_subgoals = jnp.zeros((1,self.flag.hilp_skill_dim*2)) if self.flag.high_action_in_hilp else goals
+        high_subgoals = jnp.zeros((1,self.flag.hilp_skill_dim)) if self.flag.high_action_in_hilp else goals
+            
+        
         if self.flag.final_goal:
             rets = {
                 
                 'hilp_value': self.hilp_value(observations, goals), 
                 'hilp_target_value': self.hilp_target_value(observations, goals),
-                'high_qf' : self.high_qf(observations, observations, goals), 
-                'high_target_qf' : self.high_target_qf(observations, observations, goals), 
-                'qf': self.qf(observations, actions, goals, goals),
-                'target_qf': self.target_qf(observations, actions, goals, goals),
-                'actor': self.actor(observations, goals, goals),
+                'high_qf' : self.high_qf(observations, high_subgoals, goals), 
+                'high_target_qf' : self.high_target_qf(observations, high_subgoals, goals), 
+                'qf': self.qf(observations, actions, low_subgoals, goals),
+                'target_qf': self.target_qf(observations, actions, low_subgoals, goals),
+                'actor': self.actor(observations, low_subgoals, goals),
                 'high_actor': self.high_actor(observations, goals),
                 'log_alpha' : self.log_alpha(),
                 'high_log_alpha' : self.high_log_alpha(),
@@ -517,11 +522,11 @@ class HierarchicalActorCritic_HCQL(nn.Module):
             
             'hilp_value': self.hilp_value(observations, goals), 
             'hilp_target_value': self.hilp_target_value(observations, goals),
-            'high_qf' : self.high_qf(observations, observations, goals), 
-            'high_target_qf' : self.high_target_qf(observations, observations, goals), 
-            'qf': self.qf(observations, actions, goals),
-            'target_qf': self.target_qf(observations, actions, goals),
-            'actor': self.actor(observations, goals),
+            'high_qf' : self.high_qf(observations, high_subgoals, goals), 
+            'high_target_qf' : self.high_target_qf(observations, high_subgoals, goals), 
+            'qf': self.qf(observations, actions, low_subgoals),
+            'target_qf': self.target_qf(observations, actions, low_subgoals),
+            'actor': self.actor(observations, low_subgoals),
             'high_actor': self.high_actor(observations, goals),
             'log_alpha' : self.log_alpha(),
             'high_log_alpha' : self.high_log_alpha(),
