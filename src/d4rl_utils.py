@@ -7,6 +7,242 @@ from jaxrl_m.evaluation import EpisodeMonitor
 
 import jax.numpy as jnp
 
+def make_env_get_dataset(FLAGS):
+    import os
+    import pickle
+    from src import d4rl_ant, ant_diagnostics, viz_utils, keynode_utils
+    
+    env_name = FLAGS.env_name
+    episode_index, goal_info, dataset_config = None, None, {}
+    
+    if 'antmaze' in FLAGS.env_name:
+        if FLAGS.env_name.startswith('antmaze'):
+            env_name = FLAGS.env_name
+        else:
+            env_name = '-'.join(FLAGS.env_name.split('-')[1:])
+            
+        if 'ultra' in FLAGS.env_name:
+            import d4rl_ext
+            import gym
+            env = gym.make(env_name)
+            env = EpisodeMonitor(env)
+            
+        else:
+            env = make_env(env_name)
+        env.seed(FLAGS.seed)
+    
+        if 'topview' in FLAGS.env_name:
+            # Update colors
+            l = len(env.model.tex_type)
+            # amz-large
+            sx, sy, ex, ey = 15, 45, 55, 100
+            for i in range(l):
+                if env.model.tex_type[i] == 0:
+                    height = env.model.tex_height[i]
+                    width = env.model.tex_width[i]
+                    s = env.model.tex_adr[i]
+                    for x in range(height):
+                        for y in range(width):
+                            cur_s = s + (x * width + y) * 3
+                            R = 192
+                            r = int((ex - x) / (ex - sx) * R)
+                            g = int((y - sy) / (ey - sy) * R)
+                            r = np.clip(r, 0, R)
+                            g = np.clip(g, 0, R)
+                            env.model.tex_rgb[cur_s:cur_s + 3] = [r, g, 128]
+            env.model.mat_texrepeat[0, :] = 1
+            orig_env_name = FLAGS.env_name.split('topview-')[1]
+            amz_dataset_dir = os.path.dirname(__file__)
+            amz_dataset_dir = os.path.dirname(amz_dataset_dir)
+            dataset = dict(np.load(f'{amz_dataset_dir}/data/{orig_env_name}.npz'))
+
+            dataset = Dataset.create(
+                observations={
+                    'image': dataset['images'],
+                    'state': dataset['observations'][:, 2:],
+                },
+                actions=dataset['actions'],
+                rewards=dataset['rewards'],
+                masks=dataset['masks'],
+                dones_float=dataset['dones_float'],
+                next_observations={
+                    'image': dataset['next_images'],
+                    'state': dataset['next_observations'][:, 2:],
+                },
+            )
+            # (Precomputed index) The closest observation to the original goal
+            if 'large-diverse' in FLAGS.env_name:
+                target_idx = 38190
+            elif 'large-play' in FLAGS.env_name:
+                target_idx = 798118
+            elif 'ultra-diverse' in FLAGS.env_name:
+                target_idx = 352934
+            elif 'ultra-play' in FLAGS.env_name:
+                target_idx = 77798
+            else:
+                raise NotImplementedError
+            goal_info = {
+                'ob': {
+                    'image': dataset['observations']['image'][target_idx],
+                    'state': dataset['observations']['state'][target_idx],
+                }
+            }
+
+            
+            # 사용하는 데이터인지 불명확
+            # viz_env, viz_dataset = d4rl_ant.get_env_and_dataset(orig_env_name)
+            # viz = ant_diagnostics.Visualizer(env_name, viz_env, viz_dataset, discount=FLAGS.discount)
+            # init_state = np.copy(viz_dataset['observations'][0])
+            # init_state[:2] = (12.5, 8)
+        else:
+            dataset, dataset_config = get_dataset(env, FLAGS.env_name, flag=FLAGS)
+            dataset = dataset.copy({'rewards': dataset['rewards'] - 1.0})
+            
+        env.render(mode='rgb_array', width=500, height=500)
+        if 'large' in FLAGS.env_name:
+            if 'topview' not in FLAGS.env_name:
+                env.viewer.cam.lookat[0] = 18
+                env.viewer.cam.lookat[1] = 12
+                env.viewer.cam.distance = 50
+                env.viewer.cam.elevation = -90
+            else:
+                env.viewer.cam.azimuth = 90.
+                env.viewer.cam.distance = 6
+                env.viewer.cam.elevation = -60
+                
+            viz_env, viz_dataset = d4rl_ant.get_env_and_dataset(env_name)
+            viz = ant_diagnostics.Visualizer(env_name, viz_env, viz_dataset, discount=FLAGS.discount)
+            init_state = np.copy(viz_dataset['observations'][0])
+            init_state[:2] = (12.5, 8)
+            
+        elif 'ultra' in FLAGS.env_name:
+            if 'topview' not in FLAGS.env_name:
+                env.viewer.cam.lookat[0] = 26
+                env.viewer.cam.lookat[1] = 18
+                env.viewer.cam.distance = 70
+                env.viewer.cam.elevation = -90
+        else:
+            if 'topview' not in FLAGS.env_name:
+                env.viewer.cam.lookat[0] = 18
+                env.viewer.cam.lookat[1] = 12
+                env.viewer.cam.distance = 50
+                env.viewer.cam.elevation = -90
+        if 'onehot' in FLAGS.env_name or 'visual' in FLAGS.env_name or 'topview' in FLAGS.env_name:
+            assert FLAGS.visual
+            visual_hybrid = True
+                
+    elif 'kitchen' in FLAGS.env_name:
+        if 'visual' in FLAGS.env_name:
+            orig_env_name = FLAGS.env_name.split('visual-')[1]
+            env = make_env(orig_env_name)
+            cur_folder = os.path.dirname(os.path.dirname(__file__))
+            dataset = dict(np.load(os.path.join(cur_folder, f'data/d4rl_kitchen_rendered_kitchen-mixed-v0.npz'))) 
+            state = env.reset()
+            # Random example state from the dataset for proprioceptive states
+            goal_state = [-2.3403780e+00, -1.3053924e+00, 1.1021180e+00, -1.8613019e+00, 1.5087037e-01, 1.7687809e+00, 1.2525779e+00, 2.9698312e-02, 3.0899283e-02, 3.9908718e-04, 4.9550228e-05, -1.9946630e-05, 2.7519276e-05, 4.8786267e-05, 3.2835731e-05, 2.6504624e-05, 3.8422750e-05, -6.9888681e-01, -5.0150707e-02, 3.4855098e-01, -9.8701166e-03, -7.6958216e-03, -8.0031347e-01, -1.9142720e-01, 7.2064394e-01, 1.6191028e+00, 1.0021452e+00, -3.2998802e-04, 3.7205056e-05, 5.3616576e-02]
+            goal_state[9:] = state[39:]  # Set goal object states
+            env.sim.set_state(np.concatenate([goal_state, env.init_qvel]))
+            env.sim.forward()
+            dataset['goal_info'] = kitchen_render(env).astype(np.float32)
+            dataset, dataset_config = get_dataset(env, FLAGS.env_name, dataset=dataset, filter_terminals=True, flag=FLAGS)
+            
+            # dataset = dataset.copy({
+            #     'goal_info': np.tile(kitchen_render(env).astype(np.float32), (len(dataset['observations']),1,1,1))
+            # })
+            env.seed(FLAGS.seed)
+            env.reset()
+        else:
+            env = make_env(FLAGS.env_name)
+            env.seed(FLAGS.seed)
+            dataset, dataset_config = get_dataset(env, FLAGS.env_name, filter_terminals=True, flag=FLAGS)
+            dataset = dataset.copy({'observations': dataset['observations'][:, :30], 'next_observations': dataset['next_observations'][:, :30]})
+    elif 'calvin' in FLAGS.env_name:
+        from src.envs.calvin import CalvinEnv
+        from hydra import compose, initialize
+        from src.envs.gym_env import GymWrapper
+        from src.envs.gym_env import wrap_env
+        import gzip
+        
+        initialize(config_path='src/envs/conf')
+        cfg = compose(config_name='calvin')
+        env = CalvinEnv(**cfg)
+        env.seed(FLAGS.seed)
+        env.max_episode_steps = cfg.max_episode_steps = 360
+        env = GymWrapper(
+            env=env,
+            from_pixels=cfg.pixel_ob,
+            from_state=cfg.state_ob,
+            height=cfg.screen_size[0],
+            width=cfg.screen_size[1],
+            channels_first=False,
+            frame_skip=cfg.action_repeat,
+            return_state=False,
+        )
+        env = wrap_env(env, cfg)
+        data = pickle.load(gzip.open(os.path.dirname(os.path.realpath(__file__)) + '/data/calvin.gz', "rb")) # 현재 실행되는 파일 위치에서 calvin 파일 찾음
+        ds = []
+        episode_index = 0
+        for i, d in enumerate(data):
+            if len(d['obs']) < len(d['dones']):
+                continue  # Skip incomplete trajectories.
+            # Only use the first 21 states of non-floating objects.
+            d['obs'] = d['obs'][:, :21]
+            new_d = dict(
+                observations=d['obs'][:-1],
+                next_observations=d['obs'][1:],
+                actions=d['actions'][:-1],
+                episodes = [episode_index]*len(d['obs'][:-1])
+            )
+            num_steps = new_d['observations'].shape[0]
+            new_d['rewards'] = np.zeros(num_steps)
+            new_d['terminals'] = np.zeros(num_steps, dtype=bool)
+            new_d['terminals'][-1] = True
+            ds.append(new_d)
+            episode_index +=1
+        dataset = dict()
+        for key in ds[0].keys():
+            dataset[key] = np.concatenate([d[key] for d in ds], axis=0)
+        dataset, episode_index = get_dataset(env, FLAGS.env_name, dataset=dataset, flags=FLAGS)
+    elif 'Fetch' in FLAGS.env_name:
+        if 'visual' in FLAGS.env_name:
+            # import gymnasium_robotics as gym
+            from src.envs.fetch_visual import fetch_load, FetchPushImage
+            # from src.envs.fetch_visual_ import fetch_load, FetchPushImage
+            # kwargs = {'rand_y':True, 'height':64, 'width':64, 'render_mode':'rgb_array'}
+            # env = FetchPushImage(rand_y=True)
+            kwargs = {'rand_y':True, 'height':64, 'width':64, 'render_mode':'rgb_array'}
+            env = FetchPushImage(**kwargs)
+            env.reset()
+            visual, env_name, version, type_ = FLAGS.env_name.split('-')
+            dataset_file = os.path.join(f'/home/spectrum/study/ASK_Baseline/data/{type_}/{env_name}/buffer.pkl')
+            with open(dataset_file, 'rb') as f:
+                dataset = pickle.load(f)
+                print(f'{dataset_file}, fetch dataset loaded')
+            initial_qpos = {'robot0:slide0': 0.405, 'robot0:slide1': 0.48, 'robot0:slide2': 0.0, 'object0:joint': [1.25, 0.53, 0.4, 1.0, 0.0, 0.0, 0.0]}
+            env._env_setup(initial_qpos)
+            env.goal=np.array([1.52195739, 0.73543178, 0.42469975])
+            # env.sim.set_state_from_flattened(dataset['o'][0][0])
+            pass
+        else:
+            import gymnasium as gym
+            from src.envs.fetch import fetch_load, FetchGoalWrapper
+            
+            env = gym.make(FLAGS.env_name.split('-')[0], render_mode='rgb_array',  max_episode_steps=50)
+            env.reset(seed=FLAGS.seed)
+            env = FetchGoalWrapper(env, FLAGS.env_name)
+            env = EpisodeMonitor(env)
+            # 'FetchPick-v1-expert'
+            env_name, version, type_ = FLAGS.env_name.split('-')
+            dataset_file = os.path.join(f'/home/spectrum/study/ASK_Baseline/data/{type_}/{env_name}/buffer.pkl')
+            with open(dataset_file, 'rb') as f:
+                dataset = pickle.load(f)
+                print(f'{dataset_file}, fetch dataset loaded')
+            dataset, episode_index, dataset_config = fetch_load(FLAGS.env_name, dataset)
+        
+    else:
+        raise NotImplementedError
+    
+    return env, dataset, episode_index, goal_info, dataset_config
 
 def make_env(env_name: str):
     env = gym.make(env_name)
@@ -22,7 +258,8 @@ def get_dataset(env: gym.Env,
                 obs_dtype=np.float32,
                 flag=None
                 ):
-        # goal_info = None
+        goal_info = None
+        config = dict()
         if dataset is None:
             dataset = d4rl.qlearning_dataset(env)
 
@@ -38,6 +275,10 @@ def get_dataset(env: gym.Env,
             last_idx = np.nonzero(dataset['terminals'])[0]
             penult_idx = last_idx - 1
             new_dataset = dict()
+            if 'visual' in flag.env_name:
+                goal_info = dataset['goal_info']
+                del(dataset['goal_info'])
+            
             for k, v in dataset.items():
                 if k == 'terminals':
                     v[penult_idx] = 1
@@ -59,14 +300,23 @@ def get_dataset(env: gym.Env,
             goal_info, episode_index = relabel_calvin(env, env_name, dataset, flag)
             dones_float = dataset['terminals'].copy()
         elif 'kitchen' in env_name:
+        #     dones_float = dataset['terminals'].copy()
+            if 'visual' not in env_name:
+                goal_info, episode_index = relabel_kitchen(env, env_name, dataset, flag) 
             dones_float = dataset['terminals'].copy()
-            goal_info, episode_index = relabel_kitchen(env, env_name, dataset, flag) 
-
+        
         else:
             NotImplementedError
+        
+        if 'visual' in flag.env_name:
+
             
-        observations = dataset['observations'].astype(obs_dtype)
-        next_observations = dataset['next_observations'].astype(obs_dtype)
+            embedding_observations, embedding_next_observations, goal_info = get_embedding_obs(dataset, goal_info)
+            observations = embedding_observations
+            next_observations = embedding_next_observations
+        else:
+            observations = dataset['observations'].astype(obs_dtype)
+            next_observations = dataset['next_observations'].astype(obs_dtype)
 
         # if 'ant' in env_name:
         #     if flag.kmean_weight_type == 'rtg_discount':
@@ -81,19 +331,20 @@ def get_dataset(env: gym.Env,
         # elif 'calvin' in env_name:
         #     returns, episode_index = calc_return_to_go_calvin(dataset, flag)
         
-        if 'kitchen' in flag.env_name:
-            config = {'observation_min':dataset['observations'][:,:30].min(axis=0),
-                  'observation_max':dataset['observations'][:,:30].max(axis=0),
-                  'action_max':dataset['actions'].max(axis=0),
-                  'action_min':dataset['actions'].min(axis=0),
-                  }
+        if 'visual' not in flag.env_name:
+            if 'kitchen' in flag.env_name:
+                config = {'observation_min':dataset['observations'][:,:30].min(axis=0),
+                    'observation_max':dataset['observations'][:,:30].max(axis=0),
+                    }
+            else:
+                config = {'observation_min':dataset['observations'].min(axis=0),
+                    'observation_max':dataset['observations'].max(axis=0),
+                    }
         else:
-            config = {'observation_min':dataset['observations'].min(axis=0),
-                  'observation_max':dataset['observations'].max(axis=0),
-                  'action_max':dataset['actions'].max(axis=0),
-                  'action_min':dataset['actions'].min(axis=0),
-                  }
-        
+            config.update({'action_max':dataset['actions'].max(axis=0),
+                    'action_min':dataset['actions'].min(axis=0),})
+            
+            
         
         return Dataset.create(
             observations=observations,
@@ -106,7 +357,56 @@ def get_dataset(env: gym.Env,
             goal_info = goal_info,
             ), config
         # episode_index
+
+def kitchen_render(kitchen_env, wh=64):
+    from dm_control.mujoco import engine
+    camera = engine.MovableCamera(kitchen_env.sim, wh, wh)
+    camera.set_pose(distance=1.86, lookat=[-0.3, .5, 2.], azimuth=90, elevation=-60)
+    img = camera.render()
+    return img
+
+def get_embedding_obs(dataset, goal_info):
+    
+    import os 
+    folder_path = os.path.dirname(os.path.dirname(__file__))
+    data_folder_path = os.path.join(folder_path, 'data/kitchen_mixed_embedding')
+    
+    if os.path.exists(data_folder_path):
+        import pickle
+        with open(os.path.join(data_folder_path, 'kitchen_mixed_embedding_observations.pkl'), 'rb') as f:
+            embedding_observations = pickle.load(f)
+        with open(os.path.join(data_folder_path, 'kitchen_mixed_embedding_next_observations.pkl'), 'rb') as f:
+            embedding_next_observations = pickle.load(f)
+        with open(os.path.join(data_folder_path, 'kitchen_mixed_embedding_goal_info.pkl'), 'rb') as f:
+            goal_info = pickle.load(f)
+        return embedding_observations, embedding_next_observations, goal_info
+    
+    else:
+        from src.utils import get_encoder
+        encoder = get_encoder()
+        os.makedirs(data_folder_path, exist_ok=True)
+        mini_batch = 300
+        rep_dim = 2048
+        size = len(dataset['observations']) // mini_batch
+        embedding_observations = np.zeros((len(dataset['observations']), rep_dim), dtype=np.float32)
+        embedding_next_observations = np.zeros((len(dataset['observations']), rep_dim), dtype=np.float32)
+        from tqdm import tqdm
+        for i in tqdm(range(size+1)):
+            embedding_observations[mini_batch*i:mini_batch*(i+1)] = encoder(dataset['observations'][mini_batch*i:mini_batch*(i+1)])
+            embedding_next_observations[mini_batch*i:mini_batch*(i+1)] = encoder(dataset['next_observations'][mini_batch*i:mini_batch*(i+1)])
+
+        goal_info = np.tile(encoder(goal_info), (len(dataset['observations'],1)))
+        
+        import pickle
+        with open(os.path.join(data_folder_path, 'kitchen_mixed_embedding_observations.pkl'), 'wb') as f:
+            pickle.dump(embedding_observations, f)
+        with open(os.path.join(data_folder_path, 'kitchen_mixed_embedding_next_observations.pkl'), 'wb') as f:
+            pickle.dump(embedding_next_observations, f)
+        with open(os.path.join(data_folder_path, 'kitchen_mixed_embedding_goal_info.pkl'), 'wb') as f:
+            pickle.dump(goal_info, f)
             
+        return embedding_observations, embedding_next_observations, goal_info
+
 def relabel_ant(env, env_name, dataset, flags):
     observation_pos = dataset['observations'].reshape(999,1000,-1)[:,:,:2]  
     new_rewards = np.zeros((999,1000))  

@@ -812,7 +812,14 @@ class JointTrainAgent(flax.struct.PyTreeNode):
                        seed: PRNGKey,
                        temperature: float = 1.0,
                        discrete: int = 0,
-                       num_samples: int = None) -> jnp.ndarray:
+                       num_samples: int = None,
+                       visual: int = 0) -> jnp.ndarray:
+        
+        if visual:
+            observations = agent.encoder(observations, method='encoder')
+            if goals.shape[-1] != observations:
+                goals = agent.encoder(goals, method='encoder')
+                
         if subgoals is not None:
             dist = agent.network(observations, subgoals, goals, low_dim_goals=low_dim_goals, temperature=temperature, method='actor')
         else:
@@ -832,7 +839,13 @@ class JointTrainAgent(flax.struct.PyTreeNode):
                             *,
                             seed: PRNGKey,
                             temperature: float = 1.0,
-                            num_samples: int = None) -> jnp.ndarray:
+                            num_samples: int = None,
+                            visual: int = 0) -> jnp.ndarray:
+        if visual:
+            observations = agent.encoder(observations, method='encoder')
+            if goals.shape[-1] != observations:
+                goals = agent.encoder(goals, method='encoder')
+                
         dist = agent.network(observations, goals, temperature=temperature, method='high_actor')
         if num_samples is None:
             actions = dist.sample(seed=seed)
@@ -925,28 +938,29 @@ def create_learner(
         high_policy_state_encoder = None
         high_policy_goal_encoder = None
         log_alpha = None
-        encoder = None 
+        visual_encoder = None 
         
-        if visual:
-            assert use_rep
-            from jaxrl_m.vision import encoders
+        if 'visual' in flag.env_name:
+            # assert use_rep
+            # from jaxrl_m.vision import encoders
 
-            visual_encoder = get_encoders()
+            visual_encoder = get_encoder()
+            # observations = visual_encoder(observations)
             
-            def make_encoder(bottleneck):
-                if bottleneck:
-                    return RelativeRepresentation(rep_dim=rep_dim, hidden_dims=(rep_dim,), visual=True, module=visual_encoder, layer_norm=use_layer_norm, rep_type=flag.rep_type, bottleneck=True)
-                else:
-                    return RelativeRepresentation(rep_dim=qf_hidden_dims[-1], hidden_dims=(qf_hidden_dims[-1],), visual=True, module=visual_encoder, layer_norm=use_layer_norm, rep_type=flag.rep_type, bottleneck=False)
+            # def make_encoder(bottleneck):
+            #     if bottleneck:
+            #         return RelativeRepresentation(rep_dim=rep_dim, hidden_dims=(rep_dim,), visual=True, module=visual_encoder, layer_norm=use_layer_norm, rep_type=flag.rep_type, bottleneck=True)
+            #     else:
+            #         return RelativeRepresentation(rep_dim=qf_hidden_dims[-1], hidden_dims=(qf_hidden_dims[-1],), visual=True, module=visual_encoder, layer_norm=use_layer_norm, rep_type=flag.rep_type, bottleneck=False)
 
-            qf_state_encoder = make_encoder(bottleneck=False)
-            qf_goal_encoder = make_encoder(bottleneck=use_waypoints)
-            high_qf_state_encoder = make_encoder(bottleneck=False)
-            high_qf_goal_encoder = make_encoder(bottleneck=use_waypoints)
-            policy_state_encoder = make_encoder(bottleneck=False)
-            policy_goal_encoder = make_encoder(bottleneck=False)
-            high_policy_state_encoder = make_encoder(bottleneck=False)
-            high_policy_goal_encoder = make_encoder(bottleneck=False)
+            # qf_state_encoder = make_encoder(bottleneck=False)
+            # qf_goal_encoder = make_encoder(bottleneck=use_waypoints)
+            # high_qf_state_encoder = make_encoder(bottleneck=False)
+            # high_qf_goal_encoder = make_encoder(bottleneck=use_waypoints)
+            # policy_state_encoder = make_encoder(bottleneck=False)
+            # policy_goal_encoder = make_encoder(bottleneck=False)
+            # high_policy_state_encoder = make_encoder(bottleneck=False)
+            # high_policy_goal_encoder = make_encoder(bottleneck=False)
         else:
             def make_encoder(bottleneck):
                 if bottleneck:
@@ -974,7 +988,7 @@ def create_learner(
         high_action_dim = observations.shape[-1] if not flag.high_action_in_hilp else flag.hilp_skill_dim
         high_actor_def = Policy(actor_hidden_dims, action_dim=high_action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
 
-        hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, encoder=encoder)
+        hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim)
 
         network_def = HierarchicalActorCritic_HCQL(
             encoders={
@@ -986,6 +1000,7 @@ def create_learner(
                 'policy_goal': policy_goal_encoder,
                 'high_policy_state': high_policy_state_encoder,
                 'high_policy_goal': high_policy_goal_encoder,
+                'encoder' : visual_encoder,
             },
             networks={
                 'hilp_value' : hilp_value_goal_encoder, # hilp

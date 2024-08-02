@@ -25,7 +25,7 @@ from functools import partial
 from src.gc_dataset import GCSDataset
 from src.agents import ask as learner
 from ml_collections import config_flags
-from src.utils import record_video, CsvLogger, plot_value_map, plot_q_map, plot_q_map_modified
+from src.utils import record_video, CsvLogger, plot_value_map, plot_q_map, plot_q_map_modified, plot_value_map_others
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
 from src import d4rl_utils, d4rl_ant, ant_diagnostics, viz_utils, keynode_utils
 from src.d4rl_utils import plot_obs
@@ -52,6 +52,8 @@ flags.DEFINE_integer('way_steps', 25, '')
 flags.DEFINE_integer('use_layer_norm', 1, '')
 flags.DEFINE_integer('value_hidden_dim', 512, '')
 flags.DEFINE_integer('value_num_layers', 3, '')
+flags.DEFINE_integer('actor_hidden_dim', 256, '')
+flags.DEFINE_integer('actor_num_layers', 2, '')
 flags.DEFINE_integer('geom_sample', 1, '')
 
 flags.DEFINE_float('p_randomgoal', 0.1, '') # 0.3
@@ -195,6 +197,20 @@ def main(_):
     if 'SLURM_RESTART_COUNT' in os.environ:
         exp_name += f'rs_{os.environ["SLURM_RESTART_COUNT"]}.'
 
+    
+    if 'visual' in FLAGS.env_name or 'topview' in FLAGS.env_name :
+        # FLAGS.visual = 1
+        # FLAGS.p_aug = 0.5
+        FLAGS.high_p_randomgoal = 0.0
+        FLAGS.batch_size = 256
+        FLAGS.actor_hidden_dim = 512
+        FLAGS.actor_num_layers = 3
+        # assert FLAGS.use_rep != ''
+    else:
+        FLAGS.actor_hidden_dim = 256
+        FLAGS.actor_num_layers = 2
+        
+        
     FLAGS.gcdataset['p_randomgoal'] = FLAGS.p_randomgoal
     FLAGS.gcdataset['p_trajgoal'] = FLAGS.p_trajgoal
     FLAGS.gcdataset['p_currgoal'] = FLAGS.p_currgoal
@@ -215,6 +231,7 @@ def main(_):
     FLAGS.config['discount'] = FLAGS.discount
     FLAGS.config['way_steps'] = FLAGS.way_steps
     FLAGS.config['value_hidden_dims'] = (FLAGS.value_hidden_dim,) * FLAGS.value_num_layers
+    FLAGS.config['actor_hidden_dims'] = (FLAGS.actor_hidden_dim,) * FLAGS.actor_num_layers
     
     FLAGS.config['sparse_data'] = FLAGS.sparse_data
     FLAGS.config['build_keynode_time'] = FLAGS.build_keynode_time
@@ -235,7 +252,6 @@ def main(_):
     FLAGS.config['distance'] = FLAGS.distance
     FLAGS.config['key_node_q'] = FLAGS.key_node_q
     FLAGS.config['key_node_train'] = FLAGS.key_node_train
-
 
     # Create wandb logger
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
@@ -262,91 +278,93 @@ def main(_):
     np.random.seed(FLAGS.seed)
     tf.random.set_seed(FLAGS.seed)
 
-    env_name = FLAGS.env_name
-    if 'antmaze' in FLAGS.env_name:
-        if 'ultra' in FLAGS.env_name:
-            import d4rl_ext
-            import gym
-            env = gym.make(env_name)
-            env = EpisodeMonitor(env)
-            env.seed(FLAGS.seed)
-        else:
-            env = d4rl_utils.make_env(env_name)
-            env.seed(FLAGS.seed)   
-        dataset, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
-        dataset = dataset.copy({'rewards': dataset['rewards'] - 1.0})
-        env.render(mode='rgb_array', width=500, height=500)
-        if 'large' in FLAGS.env_name:
-            env.viewer.cam.lookat[0] = 18
-            env.viewer.cam.lookat[1] = 12
-            env.viewer.cam.distance = 50
-            env.viewer.cam.elevation = -90
-            viz_env, viz_dataset = d4rl_ant.get_env_and_dataset(env_name)
-            viz = ant_diagnostics.Visualizer(env_name, viz_env, viz_dataset, discount=FLAGS.discount)
-            init_state = np.copy(viz_dataset['observations'][0])
-            init_state[:2] = (12.5, 8)
-        elif 'ultra' in FLAGS.env_name:
-            env.viewer.cam.lookat[0] = 26
-            env.viewer.cam.lookat[1] = 18
-            env.viewer.cam.distance = 70
-            env.viewer.cam.elevation = -90
-        else:
-            env.viewer.cam.lookat[0] = 18
-            env.viewer.cam.lookat[1] = 12
-            env.viewer.cam.distance = 50
-            env.viewer.cam.elevation = -90
-    elif 'kitchen' in FLAGS.env_name:
-        env = d4rl_utils.make_env(FLAGS.env_name)
-        env.seed(FLAGS.seed)
-        dataset, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS, filter_terminals=True)
-        dataset = dataset.copy({'observations': dataset['observations'][:, :30], 'next_observations': dataset['next_observations'][:, :30]})
-    elif 'calvin' in FLAGS.env_name:
-        from src.envs.calvin import CalvinEnv
-        from hydra import compose, initialize
-        from src.envs.gym_env import GymWrapper
-        from src.envs.gym_env import wrap_env
-        initialize(config_path='src/envs/conf')
-        cfg = compose(config_name='calvin')
-        env = CalvinEnv(**cfg)
-        env.seed(FLAGS.seed)
-        env.max_episode_steps = cfg.max_episode_steps = 360
-        env = GymWrapper(
-            env=env,
-            from_pixels=cfg.pixel_ob,
-            from_state=cfg.state_ob,
-            height=cfg.screen_size[0],
-            width=cfg.screen_size[1],
-            channels_first=False,
-            frame_skip=cfg.action_repeat,
-            return_state=False,
-        )
-        env = wrap_env(env, cfg)
-        data = pickle.load(gzip.open(os.path.dirname(os.path.realpath(__file__)) + '/data/calvin.gz', "rb")) # 현재 실행되는 파일 위치에서 calvin 파일 찾음
-        ds = []
-        episode_index = 0
-        for i, d in enumerate(data):
-            if len(d['obs']) < len(d['dones']):
-                continue  # Skip incomplete trajectories.
-            # Only use the first 21 states of non-floating objects.
-            d['obs'] = d['obs'][:, :21]
-            new_d = dict(
-                observations=d['obs'][:-1],
-                next_observations=d['obs'][1:],
-                actions=d['actions'][:-1],
-                episodes = [episode_index]*len(d['obs'][:-1])
-            )
-            num_steps = new_d['observations'].shape[0]
-            new_d['rewards'] = np.zeros(num_steps)
-            new_d['terminals'] = np.zeros(num_steps, dtype=bool)
-            new_d['terminals'][-1] = True
-            ds.append(new_d)
-            episode_index +=1
-        dataset = dict()
-        for key in ds[0].keys():
-            dataset[key] = np.concatenate([d[key] for d in ds], axis=0)
-        dataset = d4rl_utils.get_dataset(env, FLAGS.env_name, dataset=dataset, flag=FLAGS)
-    else:
-        raise NotImplementedError
+    env, dataset, episode_index, goal_info, dataset_config = d4rl_utils.make_env_get_dataset(FLAGS)
+
+    # env_name = FLAGS.env_name
+    # if 'antmaze' in FLAGS.env_name:
+    #     if 'ultra' in FLAGS.env_name:
+    #         import d4rl_ext
+    #         import gym
+    #         env = gym.make(env_name)
+    #         env = EpisodeMonitor(env)
+    #         env.seed(FLAGS.seed)
+    #     else:
+    #         env = d4rl_utils.make_env(env_name)
+    #         env.seed(FLAGS.seed)   
+    #     dataset, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS)
+    #     dataset = dataset.copy({'rewards': dataset['rewards'] - 1.0})
+    #     env.render(mode='rgb_array', width=500, height=500)
+    #     if 'large' in FLAGS.env_name:
+    #         env.viewer.cam.lookat[0] = 18
+    #         env.viewer.cam.lookat[1] = 12
+    #         env.viewer.cam.distance = 50
+    #         env.viewer.cam.elevation = -90
+    #         viz_env, viz_dataset = d4rl_ant.get_env_and_dataset(env_name)
+    #         viz = ant_diagnostics.Visualizer(env_name, viz_env, viz_dataset, discount=FLAGS.discount)
+    #         init_state = np.copy(viz_dataset['observations'][0])
+    #         init_state[:2] = (12.5, 8)
+    #     elif 'ultra' in FLAGS.env_name:
+    #         env.viewer.cam.lookat[0] = 26
+    #         env.viewer.cam.lookat[1] = 18
+    #         env.viewer.cam.distance = 70
+    #         env.viewer.cam.elevation = -90
+    #     else:
+    #         env.viewer.cam.lookat[0] = 18
+    #         env.viewer.cam.lookat[1] = 12
+    #         env.viewer.cam.distance = 50
+    #         env.viewer.cam.elevation = -90
+    # elif 'kitchen' in FLAGS.env_name:
+    #     env = d4rl_utils.make_env(FLAGS.env_name)
+    #     env.seed(FLAGS.seed)
+    #     dataset, dataset_config = d4rl_utils.get_dataset(env, FLAGS.env_name, flag=FLAGS, filter_terminals=True)
+    #     dataset = dataset.copy({'observations': dataset['observations'][:, :30], 'next_observations': dataset['next_observations'][:, :30]})
+    # elif 'calvin' in FLAGS.env_name:
+    #     from src.envs.calvin import CalvinEnv
+    #     from hydra import compose, initialize
+    #     from src.envs.gym_env import GymWrapper
+    #     from src.envs.gym_env import wrap_env
+    #     initialize(config_path='src/envs/conf')
+    #     cfg = compose(config_name='calvin')
+    #     env = CalvinEnv(**cfg)
+    #     env.seed(FLAGS.seed)
+    #     env.max_episode_steps = cfg.max_episode_steps = 360
+    #     env = GymWrapper(
+    #         env=env,
+    #         from_pixels=cfg.pixel_ob,
+    #         from_state=cfg.state_ob,
+    #         height=cfg.screen_size[0],
+    #         width=cfg.screen_size[1],
+    #         channels_first=False,
+    #         frame_skip=cfg.action_repeat,
+    #         return_state=False,
+    #     )
+    #     env = wrap_env(env, cfg)
+    #     data = pickle.load(gzip.open(os.path.dirname(os.path.realpath(__file__)) + '/data/calvin.gz', "rb")) # 현재 실행되는 파일 위치에서 calvin 파일 찾음
+    #     ds = []
+    #     episode_index = 0
+    #     for i, d in enumerate(data):
+    #         if len(d['obs']) < len(d['dones']):
+    #             continue  # Skip incomplete trajectories.
+    #         # Only use the first 21 states of non-floating objects.
+    #         d['obs'] = d['obs'][:, :21]
+    #         new_d = dict(
+    #             observations=d['obs'][:-1],
+    #             next_observations=d['obs'][1:],
+    #             actions=d['actions'][:-1],
+    #             episodes = [episode_index]*len(d['obs'][:-1])
+    #         )
+    #         num_steps = new_d['observations'].shape[0]
+    #         new_d['rewards'] = np.zeros(num_steps)
+    #         new_d['terminals'] = np.zeros(num_steps, dtype=bool)
+    #         new_d['terminals'][-1] = True
+    #         ds.append(new_d)
+    #         episode_index +=1
+    #     dataset = dict()
+    #     for key in ds[0].keys():
+    #         dataset[key] = np.concatenate([d[key] for d in ds], axis=0)
+    #     dataset = d4rl_utils.get_dataset(env, FLAGS.env_name, dataset=dataset, flag=FLAGS)
+    # else:
+    #     raise NotImplementedError
 
     total_steps = FLAGS.pretrain_steps
     example_observation = dataset['observations'][0, np.newaxis]
@@ -364,6 +382,9 @@ def main(_):
         cql_parameters = {'target_entropy':target_entropy, 'high_target_entropy':high_target_entropy}
         FLAGS.config.update(cql_parameters)
         FLAGS.config.update(dataset_config)
+    
+    
+    
     
     agent = learner.create_learner(FLAGS.seed,
                                    example_observation,
@@ -440,18 +461,20 @@ def main(_):
     base_observation = jax.tree_map(lambda arr: arr[0], pretrain_dataset.dataset['observations'])
     observation = env.reset()
     
-    if 'antmaze' in env_name:
+    if 'antmaze' in FLAGS.env_name:
         goal = env.wrapped_env.target_goal
         obs_goal = base_observation.copy()
         obs_goal[:2] = goal
-    elif 'kitchen' in env_name:
-        observation, obs_goal = observation[:30].copy(), observation[30:].copy()
-        obs_goal[:9] = base_observation[:9]
-    elif 'calvin' in env_name:
-        observation = observation['ob']
-        goal = np.array([0.25, 0.15, 0, 0.088, 1, 1])
-        obs_goal = base_observation.copy()
-        obs_goal[15:21] = goal
+    elif 'kitchen' in FLAGS.env_name:
+        if 'visual' not in FLAGS.env_name:
+            observation, obs_goal = observation[:30].copy(), observation[30:].copy()
+            obs_goal[:9] = base_observation[:9]
+
+    # elif 'calvin' in FLAGS.env_name:
+    #     observation = observation['ob']
+    #     goal = np.array([0.25, 0.15, 0, 0.088, 1, 1])
+    #     obs_goal = base_observation.copy()
+    #     obs_goal[15:21] = goal
     
     train_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'train.csv'))
     eval_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'eval.csv'))
@@ -463,6 +486,8 @@ def main(_):
     if False:
         if 'antmaze' in FLAGS.env_name:
             load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/ant_hilp_64.pkl'
+        elif 'visual-kitchen' in FLAGS.env_name:
+            load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/visual_kitchen_miexd_hilp_128.pkl'
         elif 'kitchen' in FLAGS.env_name:
             load_file = '/home/qortmdgh4141/disk/HIQL_Team_Project/TG/data/kitchen_mixed_hilp.pkl'
         elif 'calvin' in FLAGS.env_name:
@@ -474,7 +499,7 @@ def main(_):
     
     if 'ask' in FLAGS.algo_name or 'cql' in FLAGS.algo_name:
         if load_file is None:
-            hilp_train_steps = int(2*10**5 + 1)
+            hilp_train_steps = int(2*10**3 + 1)
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
                         smoothing=0.1,
@@ -513,7 +538,7 @@ def main(_):
         filtered_transition_index, hlip_filtered_index, dones_indexes = d4rl_utils.get_transition_index(agent, dataset, FLAGS)
         
         hilp_observations = d4rl_utils.get_hilp_obs(agent, dataset['observations'], FLAGS)
-        hilp_next_observations = d4rl_utils.get_hilp_obs(agent, dataset['next_observations'], FLAGS)
+        # hilp_next_observations = d4rl_utils.get_hilp_obs(agent, dataset['next_observations'], FLAGS)
         dataset = d4rl_utils.add_data(dataset, rep_observations=hilp_observations)
         
         key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index=filtered_transition_index, rep_obs=hilp_observations)
@@ -540,14 +565,18 @@ def main(_):
             
         pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
 
-        if i >= FLAGS.log_interval and 'ant' in FLAGS.env_name:
-            
+        if i >= FLAGS.log_interval:
             transition_index = (filtered_transition_index, hlip_filtered_index, dones_indexes)
             pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
-            value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index, key_node=key_nodes)
-            train_metrics['key_node_map'] = wandb.Image(value_map)
+            if 'ant' in FLAGS.env_name:
+                value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index, key_node=key_nodes)
+                train_metrics['key_node_map'] = wandb.Image(value_map)
+            
+            # else:
+            #     value_map, identity_map = plot_value_map_others(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index, key_node=key_nodes)
+                
             wandb.log(train_metrics, step=i)
-
+            
             
         
         find_key_node = jax.jit(key_nodes.find_closest_node)

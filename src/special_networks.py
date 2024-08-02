@@ -129,7 +129,7 @@ class MonolithicQF(nn.Module):
                 s_g = self.s_g(jnp.concatenate([observations, subgoals], axis=-1))
             
             einsum_str = 'ijk,ijk->ij' if len(s_a.shape) == 3 else 'ijkl,ijkl->ijk'
-            q1, q2 = -jnp.einsum(einsum_str, s_a, s_g)
+            q1, q2 = jnp.einsum(einsum_str, s_a, s_g)
         
         else:
             
@@ -394,7 +394,7 @@ class HierarchicalActorCritic_HCQL(nn.Module):
         
         # assert goals.shape[-1] == 3, 'goals dim error'
         
-        state_reps = get_rep(self.encoders['policy_state'], targets=observations)
+        state_reps = get_rep(self.encoders['encoder'], targets=observations)
         if not state_rep_grad:
             state_reps = jax.lax.stop_gradient(state_reps)
         
@@ -402,7 +402,7 @@ class HierarchicalActorCritic_HCQL(nn.Module):
             goal_reps = goals
         else:
             # if self.flag.use_rep in ["hiql_goal_encoder", "vae_encoder"] :
-            goal_reps = get_rep(self.encoders['qf_goal'], targets=goals, bases=observations)
+            goal_reps = get_rep(self.encoders['encoder'], targets=goals)
             if not goal_rep_grad: # goal_rep_grad=False: low actor때는 업데이트 안함.
                 goal_reps = jax.lax.stop_gradient(goal_reps)
         if self.flag.final_goal:
@@ -411,11 +411,11 @@ class HierarchicalActorCritic_HCQL(nn.Module):
             return self.networks['actor'](jnp.concatenate([state_reps, goal_reps], axis=-1), **kwargs)
 
     def high_actor(self, observations, goals, state_rep_grad=True, goal_rep_grad=True, **kwargs):
-        state_reps = get_rep(self.encoders['high_policy_state'], targets=observations)
+        state_reps = get_rep(self.encoders['encoder'], targets=observations)
         if not state_rep_grad:
             state_reps = jax.lax.stop_gradient(state_reps)
         
-        goal_reps = get_rep(self.encoders['high_policy_goal'], targets=goals, bases=observations)
+        goal_reps = get_rep(self.encoders['encoder'], targets=goals)
         if not goal_rep_grad:
             goal_reps = jax.lax.stop_gradient(goal_reps)
         

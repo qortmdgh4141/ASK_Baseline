@@ -11,7 +11,7 @@ main_py_path="/home/qortmdgh4141/disk/HIQL_Team_Project/TG/main.py" # 부모 디
 current_time=$(date "+%m-%d_%H:%M")
 project="cql-kitchen"
 
-extra_name="cql-G_kl_25_h10_F_Bi"
+extra_name="cql-G_kl_25_h10_F_Bi_e.7"
 
 gpu="0"
 start=0
@@ -28,7 +28,7 @@ n_step_hilp=0
 high_temperature=1
 temperature=1
 discount=0.99
-pretrain_expectile=0.95
+pretrain_expectile=0.7
 distance='first'
 key_node_q=0
 key_node_train=0
