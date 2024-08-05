@@ -107,13 +107,12 @@ class MonolithicQF(nn.Module):
     # rep_dim: int = None
     obs_rep: int = 0
     bilinear: int = 0
-    q_dim: int = 16
     
     def setup(self) -> None:
         repr_class = LayerNormRepresentation if self.use_layer_norm else Representation
         if self.bilinear:
-            self.s_a = repr_class((*self.hidden_dims, self.q_dim), activate_final=False)
-            self.s_g = repr_class((*self.hidden_dims, self.q_dim), activate_final=False)
+            self.s_a = repr_class((*self.hidden_dims, self.bilinear), activate_final=False)
+            self.s_g = repr_class((*self.hidden_dims, self.bilinear), activate_final=False)
             
         else:
             self.q_net = repr_class((*self.hidden_dims, 1), activate_final=False)
@@ -160,14 +159,18 @@ class HILP_GoalConditionedPhiValue(nn.Module):
     use_layer_norm: bool = True
     ensemble: bool = True
     encoder: nn.Module = None # False
+    obs_dim: int = 0
 
     def setup(self) -> None:
         repr_class = LayerNormRepresentation if self.use_layer_norm else Representation
         phi = repr_class((*self.hidden_dims, self.skill_dim), activate_final=False, ensemble=self.ensemble)
+        
+        decoder = repr_class((*self.hidden_dims, self.obs_dim), activate_final=False)
         # If HILP on visual-kitchen-partial impala_small; else None # 
         if self.encoder is not None: 
             phi = nn.Sequential([self.encoder(), phi])
         self.phi = phi
+        self.decoder = decoder
 
     def get_phi(self, observations):
         return self.phi(observations)[0]  # Use the first vf
@@ -177,6 +180,12 @@ class HILP_GoalConditionedPhiValue(nn.Module):
         phi_g = self.phi(goals)
         squared_dist = ((phi_s - phi_g) ** 2).sum(axis=-1)
         v = -jnp.sqrt(jnp.maximum(squared_dist, 1e-6))
+        
+        if self.obs_dim:
+            recon_obs = self.decoder(phi_s)
+            recon_goals = self.decoder(phi_g)
+            return v, (recon_obs, recon_goals)
+        
         return v
     
 class Vae_Encoder(nn.Module):

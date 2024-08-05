@@ -54,6 +54,8 @@ flags.DEFINE_integer('value_hidden_dim', 512, '')
 flags.DEFINE_integer('value_num_layers', 3, '')
 flags.DEFINE_integer('actor_hidden_dim', 256, '')
 flags.DEFINE_integer('actor_num_layers', 2, '')
+flags.DEFINE_integer('qf_hidden_dim', 512, '')
+flags.DEFINE_integer('qf_num_layers', 3, '')
 flags.DEFINE_integer('geom_sample', 1, '')
 
 flags.DEFINE_float('p_randomgoal', 0.1, '') # 0.3
@@ -86,6 +88,9 @@ flags.DEFINE_integer('relative_dist_in_eval_On', 0, '')
 flags.DEFINE_string('mapping_method', 'nearest', '') # nearest, triple, center
 
 flags.DEFINE_integer('hilp_skill_dim', 32, '')
+flags.DEFINE_integer('hilp_decoder', 1, '')
+flags.DEFINE_integer('cql_high_target_action_gap', 32, '')
+flags.DEFINE_integer('bilinear', 32, '')
 
 flags.DEFINE_integer('vae_encoder_dim', 10, '')
 flags.DEFINE_float('vae_recon_coe', 0.00, '')
@@ -210,6 +215,10 @@ def main(_):
         FLAGS.actor_hidden_dim = 256
         FLAGS.actor_num_layers = 2
         
+    if FLAGS.bilinear != 0:
+        FLAGS.qf_hidden_dim = 256
+        FLAGS.qf_num_layers = 3
+        
         
     FLAGS.gcdataset['p_randomgoal'] = FLAGS.p_randomgoal
     FLAGS.gcdataset['p_trajgoal'] = FLAGS.p_trajgoal
@@ -232,6 +241,7 @@ def main(_):
     FLAGS.config['way_steps'] = FLAGS.way_steps
     FLAGS.config['value_hidden_dims'] = (FLAGS.value_hidden_dim,) * FLAGS.value_num_layers
     FLAGS.config['actor_hidden_dims'] = (FLAGS.actor_hidden_dim,) * FLAGS.actor_num_layers
+    FLAGS.config['qf_hidden_dims'] = (FLAGS.qf_hidden_dim,) * FLAGS.qf_num_layers
     
     FLAGS.config['sparse_data'] = FLAGS.sparse_data
     FLAGS.config['build_keynode_time'] = FLAGS.build_keynode_time
@@ -241,6 +251,7 @@ def main(_):
     FLAGS.config['use_keynode_in_eval_On'] = FLAGS.use_keynode_in_eval_On
     FLAGS.config['use_rep'] = FLAGS.use_rep
     FLAGS.config['hilp_skill_dim'] = FLAGS.hilp_skill_dim 
+    FLAGS.config['hilp_decoder'] = FLAGS.hilp_decoder 
     FLAGS.config['vae_recon_coe'] = FLAGS.vae_recon_coe
     FLAGS.config['kl_loss'] = FLAGS.kl_loss
     FLAGS.config['final_goal'] = FLAGS.final_goal
@@ -252,6 +263,8 @@ def main(_):
     FLAGS.config['distance'] = FLAGS.distance
     FLAGS.config['key_node_q'] = FLAGS.key_node_q
     FLAGS.config['key_node_train'] = FLAGS.key_node_train
+    FLAGS.config['bilinear'] = FLAGS.bilinear
+    FLAGS.config['cql_high_target_action_gap'] = FLAGS.cql_high_target_action_gap
 
     # Create wandb logger
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
@@ -377,10 +390,10 @@ def main(_):
         from src.agents import ask_hilp as learner
     elif 'cql' == FLAGS.algo_name:
         from src.agents import cql as learner
-        target_entropy = -np.prod(env.action_space.shape).item()
-        high_target_entropy = -np.prod(env.observation_space.shape).item()
-        cql_parameters = {'target_entropy':target_entropy, 'high_target_entropy':high_target_entropy}
-        FLAGS.config.update(cql_parameters)
+        # target_entropy = -np.prod(env.action_space.shape).item()
+        # high_target_entropy = -np.prod(env.observation_space.shape).item()
+        # cql_parameters = {'target_entropy':target_entropy, 'high_target_entropy':high_target_entropy}
+        # FLAGS.config.update(cql_parameters)
         FLAGS.config.update(dataset_config)
     
     
@@ -391,6 +404,7 @@ def main(_):
                                    example_action,
                                    use_layer_norm=FLAGS.use_layer_norm,
                                    flag=FLAGS,
+                                   
                                    **FLAGS.config)
     
     
@@ -470,11 +484,11 @@ def main(_):
             observation, obs_goal = observation[:30].copy(), observation[30:].copy()
             obs_goal[:9] = base_observation[:9]
 
-    # elif 'calvin' in FLAGS.env_name:
-    #     observation = observation['ob']
-    #     goal = np.array([0.25, 0.15, 0, 0.088, 1, 1])
-    #     obs_goal = base_observation.copy()
-    #     obs_goal[15:21] = goal
+    elif 'calvin' in FLAGS.env_name:
+        observation = observation['ob']
+        goal = np.array([0.25, 0.15, 0, 0.088, 1, 1])
+        obs_goal = base_observation.copy()
+        obs_goal[15:21] = goal
     
     train_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'train.csv'))
     eval_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'eval.csv'))
@@ -499,7 +513,8 @@ def main(_):
     
     if 'ask' in FLAGS.algo_name or 'cql' in FLAGS.algo_name:
         if load_file is None:
-            hilp_train_steps = int(2*10**3 + 1)
+            
+            hilp_train_steps = int(2*10**5 + 1) if 'ant' in FLAGS.env_name else int(1*10**5 + 1)
             for i in tqdm.tqdm(range(1, hilp_train_steps),
                         desc="hilp_train",
                         smoothing=0.1,
@@ -509,11 +524,14 @@ def main(_):
                 if i % FLAGS.log_interval == 0:
                     train_metrics = {f'training/{k}': v for k, v in update_info.items()}
                 
-                    if 'ant' in FLAGS.env_name and i % (FLAGS.log_interval *10) == 0:
+                    if i % (FLAGS.log_interval *10) == 0:
                         pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
-                        value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
-                        train_metrics['value_map'] = wandb.Image(value_map)
-
+                        if 'ant' in FLAGS.env_name:
+                            value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
+                            train_metrics['value_map'] = wandb.Image(value_map)
+                        # else: 
+                        #     value_map, identity_map = plot_value_map_others(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
+                            
                     wandb.log(train_metrics, step=i)
             
             save_dict = dict(
@@ -679,11 +697,14 @@ def main(_):
                     pickle.dump(save_dict, f)         
             if 'calvin' in FLAGS.env_name:
                 score = eval_metrics['evaluation/final.return']
+                log_key = 'evaluation/final.return'
             else:
                 score = eval_metrics['evaluation/episode.return']
+                log_key = 'evaluation/episode.return'
             wandb.log(eval_metrics, step=hilp_train_steps+i)
             eval_logger.log(eval_metrics, step=hilp_train_steps+i)
-            return_logger.log({'evaluation/episode.return' :eval_metrics['evaluation/episode.return']}, step=hilp_train_steps+i)
+            
+            return_logger.log({'evaluation/episode.return' :eval_metrics[log_key]}, step=hilp_train_steps+i)
     train_logger.close()
     eval_logger.close()
     return_logger.close()

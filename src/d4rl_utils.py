@@ -163,7 +163,7 @@ def make_env_get_dataset(FLAGS):
         from src.envs.gym_env import wrap_env
         import gzip
         
-        initialize(config_path='src/envs/conf')
+        initialize(config_path='envs/conf')
         cfg = compose(config_name='calvin')
         env = CalvinEnv(**cfg)
         env.seed(FLAGS.seed)
@@ -179,7 +179,8 @@ def make_env_get_dataset(FLAGS):
             return_state=False,
         )
         env = wrap_env(env, cfg)
-        data = pickle.load(gzip.open(os.path.dirname(os.path.realpath(__file__)) + '/data/calvin.gz', "rb")) # 현재 실행되는 파일 위치에서 calvin 파일 찾음
+        folder_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        data = pickle.load(gzip.open(folder_path + '/data/calvin.gz', "rb")) # 현재 실행되는 파일 위치에서 calvin 파일 찾음
         ds = []
         episode_index = 0
         for i, d in enumerate(data):
@@ -202,7 +203,7 @@ def make_env_get_dataset(FLAGS):
         dataset = dict()
         for key in ds[0].keys():
             dataset[key] = np.concatenate([d[key] for d in ds], axis=0)
-        dataset, episode_index = get_dataset(env, FLAGS.env_name, dataset=dataset, flags=FLAGS)
+        dataset, dataset_config = get_dataset(env, FLAGS.env_name, dataset=dataset, flag=FLAGS)
     elif 'Fetch' in FLAGS.env_name:
         if 'visual' in FLAGS.env_name:
             # import gymnasium_robotics as gym
@@ -446,22 +447,22 @@ def relabel_ant(env, env_name, dataset, flags):
 
 # 질문: 승호 나중에 코드 체크
 def relabel_calvin(env, env_name, dataset, flags):
-    t = -1
-    for i, d in enumerate(dataset['observations'][:,15:21]):
-        if dataset['episodes'][i] != t:
-            t = dataset['episodes'][i] 
-            start_door, start_drawer, _, _, start_lightbulb, start_led = d
-        door, drawer, _, _, lightbulb, led = d
-        if abs(start_drawer - drawer) > 0.12:
-            dataset['rewards'][i] +=1
-        if start_lightbulb != lightbulb:
-            dataset['rewards'][i] +=1
-        if abs(start_door - door) > 0.15:
-            dataset['rewards'][i] +=1
-        if start_led != led:
-            dataset['rewards'][i] +=1
+    # t = -1
+    # for i, d in enumerate(dataset['observations'][:,15:21]):
+    #     if dataset['episodes'][i] != t:
+    #         t = dataset['episodes'][i] 
+        #     start_door, start_drawer, _, _, start_lightbulb, start_led = d
+        # door, drawer, _, _, lightbulb, led = d
+        # if abs(start_drawer - drawer) > 0.12:
+        #     dataset['rewards'][i] +=1
+        # if start_lightbulb != lightbulb:
+        #     dataset['rewards'][i] +=1
+        # if abs(start_door - door) > 0.15:
+        #     dataset['rewards'][i] +=1
+        # if start_led != led:
+        #     dataset['rewards'][i] +=1
     reshape_obs = dataset['observations'].reshape(1204,499,-1)[:,-1,:]
-    goal_info = np.repeat(reshape_obs[:,np.newaxis,:], 499, axis=1).reshape(-1, 21)
+    goal_info = np.repeat(reshape_obs[:,np.newaxis,:], 499, axis=1).reshape(dataset['observations'].shape)
     return goal_info, dataset['episodes']
 
 def relabel_kitchen(env, env_name, dataset, flags):
@@ -708,6 +709,8 @@ def get_transition_index(agent, dataset, flags):
         return get_transition_index_ant(agent, dataset, flags)
     elif 'kitchen' in flags.env_name:
         return get_transition_index_kitchen(agent, dataset, flags)
+    elif 'calvin' in flags.env_name:
+        return get_transition_index_calvin(agent, dataset, flags)
     else:
         NotImplementedError
 
@@ -795,6 +798,60 @@ def get_transition_index_ant(agent, dataset, flags):
     return hlip_filtered_index.reshape(-1).astype(bool), hlip_filtered_index.reshape(-1).astype(bool), None
 
 def get_transition_index_kitchen(agent, dataset, flags):
+    import jax
+    mini_batch = 20000
+    size = len(dataset['observations']) // mini_batch
+    values = np.zeros(len(dataset['observations']), dtype=np.float32)
+    value_fn = jax.jit(agent.get_hilp_value)
+    
+    for i in range(size+1):
+        values[mini_batch*i:mini_batch*(i+1)] = value_fn(observations=dataset['observations'][mini_batch*i:mini_batch*(i+1)], goals=dataset['goal_info'][mini_batch*i:mini_batch*(i+1)])[0]
+    #####################################################################################
+    # tdd_ = values[1:] - values[:-1]
+    # first_tdd = jnp.array([tdd_[tdd_>0].mean()])
+    # tdd = jnp.concatenate([first_tdd, tdd_],axis=0)
+    # hlip_filtered_index = np.where(tdd > tdd[tdd>0].mean(), True, False)
+    # dones_indexes = np.where(dataset['dones_float']==1, True, False)
+    
+    # hlip_filtered_index = hlip_filtered_index.reshape(-1).astype(bool)
+    
+    # print(f'{tdd[0]=}, {tdd.min()=}, {tdd.max()=}, {hlip_filtered_index.mean()=},, {tdd[hlip_filtered_index].mean()=}')
+
+    # return hlip_filtered_index, hlip_filtered_index, dones_indexes
+    
+    #####################################################################################
+    max_values = values[0]
+    hlip_filtered_index = np.zeros_like(values, dtype=bool)
+    for i, v in enumerate(values[:-1]):
+        if v > max_values:
+            max_values = v
+            hlip_filtered_index[i] = True
+        if dataset['dones_float'][i]:
+            max_values = values[i+1]
+    
+
+
+    
+    tdd_ = values[1:] - values[:-1]
+    first_tdd = jnp.array([tdd_[tdd_>0].mean()])
+    td_flatten = jnp.concatenate([first_tdd, tdd_],axis=0)
+    # hlip_filtered_index = np.where(td_flatten > td_flatten[td_flatten>0].mean(), True, False)
+ 
+    # index = np.zeros_like(values, dtype=bool)
+    # max_values = values[:,0]
+    # for i, t in enumerate(values[:,1:]):
+    #     better_idx = np.where(max_values < values[:,i+1], True, False)
+    #     max_values[better_idx] = values[better_idx, i+1]
+    #     index[better_idx,i+1] = True
+    
+    # hlip_filtered_index = index.reshape(-1)
+
+    print(f'after filtered tdds {td_flatten[0]=}, {td_flatten.min()=}, {td_flatten.max()=}, {hlip_filtered_index.mean()*100=:.2f} % used dataset, {td_flatten[hlip_filtered_index].mean()=}')
+    print(f'better filtered tdds {td_flatten[0]=}, {td_flatten[hlip_filtered_index].min()=}, {td_flatten[hlip_filtered_index].max()=}, {hlip_filtered_index.mean()*100=:.2f} % used dataset, {td_flatten[hlip_filtered_index].mean()=}')
+    
+    return hlip_filtered_index, hlip_filtered_index, None
+
+def get_transition_index_calvin(agent, dataset, flags):
     import jax
     mini_batch = 20000
     size = len(dataset['observations']) // mini_batch
