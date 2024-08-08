@@ -52,7 +52,7 @@ def kitchen_render(kitchen_env, wh=64):
 def evaluate_with_trajectories(
         policy_fn, high_policy_fn, env: gym.Env, env_name, num_episodes: int, base_observation=None, num_video_episodes=0,
         eval_temperature=0, epsilon=0, 
-        config=None, find_key_node = None, hilp_fn=None, FLAGS = None, distance_fn=None, nodes=None
+        config=None, find_key_node = None, hilp_fn=None, FLAGS=None, distance_fn=None, nodes=None, decode=None
 ) -> Dict[str, float]:
     trajectories = []
     stats = defaultdict(list)
@@ -95,8 +95,9 @@ def evaluate_with_trajectories(
         dist = 0
         init_dist = 1e5 if FLAGS.relative_dist_in_eval_On else 0
         cos_distances = []
-        index = faiss.IndexFlatL2(nodes.rep_centroids.shape[-1])
-        index.add(nodes.rep_centroids)
+        if config['use_keynode_in_eval_On']:
+            index = faiss.IndexFlatL2(nodes.rep_centroids.shape[-1])
+            index.add(nodes.rep_centroids)
             
         while not done:
                
@@ -108,6 +109,8 @@ def evaluate_with_trajectories(
                     
                     cur_obs_goal = plot_subgoal = jnp.concatenate([hilp_fn(observations=observation), cur_obs_subgoal], axis=-1)
                     
+                elif 'guider' in FLAGS.algo_name:
+                    cur_obs_goal = cur_obs_subgoal = decode(observations=observation, z=cur_obs_subgoal)
                 else:
                     cur_obs_goal = plot_subgoal = cur_obs_subgoal
                 if config['use_keynode_in_eval_On']:
@@ -198,7 +201,7 @@ def evaluate_with_trajectories(
                     size = 240
                     box_size = 0.015
                     cur_frame = env.render(mode='rgb_array', width=size, height=size).transpose(2, 0, 1).copy()
-                    if ('large' in env_name or 'ultra' in env_name) and not FLAGS.high_action_in_hilp:
+                    if ('large' in env_name or 'ultra' in env_name) and not FLAGS.high_action_in_hilp and FLAGS.algo_name !='guider' :
                         def xy_to_pixxy(x, y):
                             if 'large' in env_name:
                                 pixx = (x / 36) * (0.93 - 0.07) + 0.07

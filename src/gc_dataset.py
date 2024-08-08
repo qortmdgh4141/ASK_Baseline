@@ -107,7 +107,7 @@ class GCSDataset(GCDataset):
             'terminal': False,
         })
 
-    def sample(self, batch_size: int, indx=None, hilp=False):
+    def sample(self, batch_size: int, indx=None, **kwargs):
         if indx is None:
             indx = np.random.randint(self.dataset.size-1, size=batch_size)
         
@@ -137,7 +137,7 @@ class GCSDataset(GCDataset):
         if self.final_goal:
             batch['final_goals'] = jax.tree_map(lambda arr: arr[final_state_indx], self.dataset['observations'])
         
-        if hilp == False:
+        if kwargs.get('high_actor_update') == True:
             # subgoal sampled from its own trajectory with distance ratio for high level training
             distance = np.random.rand(batch_size)
             high_traj_goal_indx = np.round((np.minimum(indx + 1, final_state_indx) * distance + final_state_indx * (1 - distance))).astype(int)

@@ -61,7 +61,7 @@ flags.DEFINE_integer('geom_sample', 1, '')
 flags.DEFINE_float('p_randomgoal', 0.1, '') # 0.3
 flags.DEFINE_float('p_trajgoal', 0.5, '')
 flags.DEFINE_float('p_currgoal', 0.4, '') # 0.2
-flags.DEFINE_float('high_p_randomgoal', 0.1, '') # 0.6
+flags.DEFINE_float('high_p_randomgoal', 0.0, '') # 0.6
 flags.DEFINE_float('high_p_relable', 0.8, '')
 flags.DEFINE_float('high_temperature', 1, '')
 flags.DEFINE_float('pretrain_expectile', 0.7, '')
@@ -74,6 +74,7 @@ flags.DEFINE_integer('expert_data_On', 0, '') # 현재 kitchen (reward >= 3), ca
 flags.DEFINE_string('use_rep', '', '') # ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]
 flags.DEFINE_integer('rep_normalizing_On', 1, '') # 0: rep_norm 제거 // 1: rep_norm 사용
 flags.DEFINE_integer('rep_dim', 10, '')
+flags.DEFINE_integer('latent_dim', 10, '')
 
 flags.DEFINE_string('build_keynode_time', "during_training", '') # ["pre_training", "during_training", "post_training"]
 flags.DEFINE_integer('keynode_num', 2, '')
@@ -90,7 +91,7 @@ flags.DEFINE_string('mapping_method', 'nearest', '') # nearest, triple, center
 flags.DEFINE_integer('hilp_skill_dim', 32, '')
 flags.DEFINE_integer('hilp_decoder', 1, '')
 flags.DEFINE_integer('cql_high_target_action_gap', 32, '')
-flags.DEFINE_integer('bilinear', 32, '')
+flags.DEFINE_integer('bilinear', 0, '')
 
 flags.DEFINE_integer('vae_encoder_dim', 10, '')
 flags.DEFINE_float('vae_recon_coe', 0.00, '')
@@ -395,6 +396,11 @@ def main(_):
         # cql_parameters = {'target_entropy':target_entropy, 'high_target_entropy':high_target_entropy}
         # FLAGS.config.update(cql_parameters)
         FLAGS.config.update(dataset_config)
+    elif 'guider' == FLAGS.algo_name:
+        from src.agents import guider as learner
+        FLAGS.config.update(dataset_config)
+
+        
     
     
     
@@ -409,8 +415,10 @@ def main(_):
     
     
     # hilp 이외의 알고리즘 초기화 용
-    find_key_node, hilp_fn, distance_fn, key_nodes = None, None, None, None
+    find_key_node, hilp_fn, distance_fn, key_nodes, decode = None, None, None, None, None
     
+    if 'guider' == FLAGS.algo_name:
+        decode = agent.get_decode
     
     # if FLAGS.use_rep == "hiql_goal_encoder":
     #     encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
@@ -511,25 +519,35 @@ def main(_):
     else:
         load_file = None
     
-    if 'ask' in FLAGS.algo_name or 'cql' in FLAGS.algo_name:
+    # pre train - hilp or prior model
+    if 'ask' in FLAGS.algo_name or 'cql' in FLAGS.algo_name or 'guider' in FLAGS.algo_name:
         if load_file is None:
             
-            hilp_train_steps = int(2*10**5 + 1) if 'ant' in FLAGS.env_name else int(1*10**5 + 1)
-            for i in tqdm.tqdm(range(1, hilp_train_steps),
-                        desc="hilp_train",
+            # train_steps = int(2*10**5 + 1) if 'ant' in FLAGS.env_name else int(1*10**5 + 1)
+            pretrain_steps = int(5*10**3 + 1) if 'guider' in FLAGS.algo_name else pretrain_steps
+            if 'guider' in FLAGS.algo_name:
+                update = dict(qf_update=False, actor_update=False, alpha_update=False, high_actor_update=False, high_qf_update=False, hilp_update=False, prior_update=True)
+            else:
+                update = dict(qf_update=False, actor_update=False, alpha_update=False, high_actor_update=False, high_qf_update=False, hilp_update=True, prior_update=False)
+            
+            
+            for i in tqdm.tqdm(range(1, pretrain_steps),
+                        desc="pre_train",
                         smoothing=0.1,
                         dynamic_ncols=True):
-                pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size*2)
-                agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, hilp_update=True)
+                
+                pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size, **update)
+                agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, **update)
                 if i % FLAGS.log_interval == 0:
                     train_metrics = {f'training/{k}': v for k, v in update_info.items()}
                 
                     if i % (FLAGS.log_interval *10) == 0:
                         pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
-                        if 'ant' in FLAGS.env_name:
+                        if 'ant' in FLAGS.env_name and 'networks_hilp_value' in agent.network.params.keys():
                             value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
                             train_metrics['value_map'] = wandb.Image(value_map)
                         # else: 
+                        # ant 외 환경에서 tsne 사용해서 value 그려볼것
                         #     value_map, identity_map = plot_value_map_others(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
                             
                     wandb.log(train_metrics, step=i)
@@ -545,48 +563,40 @@ def main(_):
                 pickle.dump(save_dict, f)  
         else: 
             i=0
-            hilp_train_steps=0
             train_metrics= dict()
             with open(load_file, "rb") as f:
                 loaded_dict = pickle.load(f)
             agent = flax.serialization.from_state_dict(agent, loaded_dict['agent'])
         
-    
-        distance_fn = jax.jit(agent.get_hilp_value)
-        filtered_transition_index, hlip_filtered_index, dones_indexes = d4rl_utils.get_transition_index(agent, dataset, FLAGS)
+        if 'networks_hilp_value' in agent.network.params.keys():
+            distance_fn = jax.jit(agent.get_hilp_value)
+            filtered_transition_index, hlip_filtered_index, dones_indexes = d4rl_utils.get_transition_index(agent, dataset, FLAGS)
+            
+            hilp_observations = d4rl_utils.get_hilp_obs(agent, dataset['observations'], FLAGS)
+            dataset = d4rl_utils.add_data(dataset, rep_observations=hilp_observations)
+            
+            key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index=filtered_transition_index, rep_obs=hilp_observations)
+            agent = agent.replace(key_nodes=key_nodes.centroids)
+            hilp_fn = jax.jit(agent.get_hilp_phi)
+        elif FLAGS.use_keynode_in_eval_On:
+            key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS)
+            agent = agent.replace(key_nodes=key_nodes.centroids)
+            
         
-        hilp_observations = d4rl_utils.get_hilp_obs(agent, dataset['observations'], FLAGS)
-        # hilp_next_observations = d4rl_utils.get_hilp_obs(agent, dataset['next_observations'], FLAGS)
-        dataset = d4rl_utils.add_data(dataset, rep_observations=hilp_observations)
-        
-        key_nodes, sparse_data_index = keynode_utils.build_keynodes(dataset, flags=FLAGS, episode_index=filtered_transition_index, rep_obs=hilp_observations)
-
-    
-        # find_key_node = key_nodes.find_closest_node
-        # find_key_node = key_nodes.find_closest_node
-        hilp_fn = jax.jit(agent.get_hilp_phi)
-        agent = agent.replace(key_nodes=key_nodes.centroids)
-        
-        # if FLAGS.kl_loss or FLAGS.mse_loss or FLAGS.high_action_in_hilp or 'cql' in FLAGS.algo_name:
-        # add keynode in pretrain_dataset
-        find_key_node_in_dataset = key_nodes.find_key_node_in_dataset
-        # key_node, letent_key_node = d4rl_utils.get_latent_key_nodes(find_key_node_in_dataset, hilp_observations, FLAGS)
         if FLAGS.high_action_in_hilp:
-            # dataset = d4rl_utils.add_data(dataset, key_node=letent_key_node, rep_observations=hilp_observations)
             dataset = dataset.copy({'rep_observations' : hilp_observations})
             agent = agent.replace(config=agent.config.copy({'rep_observation_min':jnp.min(hilp_observations, axis=0), 'rep_observation_max':jnp.max(hilp_observations, axis=0), }))
 
-        else:
-            # dataset = d4rl_utils.add_data(dataset, key_node=key_node)
+        elif 'guider' not in FLAGS.algo_name:
             dataset = dataset.copy({'key_node' : key_nodes.matched_keynode_in_raw})
             dataset = dataset.copy({'rep_observations' : hilp_observations})
             
         pretrain_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
 
         if i >= FLAGS.log_interval:
-            transition_index = (filtered_transition_index, hlip_filtered_index, dones_indexes)
-            pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
-            if 'ant' in FLAGS.env_name:
+            if 'ant' in FLAGS.env_name and 'networks_hilp_value' in agent.network.params.keys():
+                transition_index = (filtered_transition_index, hlip_filtered_index, dones_indexes)
+                pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
                 value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, 0, g_start_time, pretrain_batch, dataset['observations'], transition_index, key_node=key_nodes)
                 train_metrics['key_node_map'] = wandb.Image(value_map)
             
@@ -596,29 +606,30 @@ def main(_):
             wandb.log(train_metrics, step=i)
             
             
-        
-        find_key_node = jax.jit(key_nodes.find_closest_node)
-        # find_key_node = key_nodes.find_closest_node
-    else:
-        hilp_train_steps = 0
-        
+    
+    update = dict(qf_update=False, actor_update=False, alpha_update=True, high_actor_update=True, high_qf_update=True, hilp_update=False, prior_update=False)
+    
     for i in tqdm.tqdm(range(1, total_steps + 1),
                    desc="main_train",
                    smoothing=0.1,
                    dynamic_ncols=True):
-        pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size, hilp=False)
-        agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, hilp_update=False)
+        if i == 5e5:
+            update = dict(qf_update=True, actor_update=True, alpha_update=False, high_actor_update=False, high_qf_update=False, hilp_update=False, prior_update=False)
+            
+        pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size, **update)
+        # agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, hilp_update=False)
+        agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, **update)
 
         if i % FLAGS.log_interval == 0:
             train_metrics = {f'training/{k}': v for k, v in update_info.items()}
-            if 'cql' not in FLAGS.algo_name:
+            if FLAGS.algo_name not in ['cql', 'guider']:
                 debug_statistics = get_debug_statistics(agent, pretrain_batch)
                 train_metrics.update({f'pretraining/debug/{k}': v for k, v in debug_statistics.items()})
             train_metrics['time/epoch_time'] = (time.time() - last_time) / FLAGS.log_interval
             train_metrics['time/total_time'] = (time.time() - first_time)
             last_time = time.time()
-            wandb.log(train_metrics, step=hilp_train_steps+i)
-            train_logger.log(train_metrics, step=hilp_train_steps+i)
+            wandb.log(train_metrics, step=pretrain_steps+i)
+            train_logger.log(train_metrics, step=pretrain_steps+i)
 
 
         if i == 1 or i % FLAGS.eval_interval == 0:
@@ -640,7 +651,8 @@ def main(_):
                     hilp_fn=hilp_fn,
                     distance_fn=distance_fn,
                     FLAGS=FLAGS,
-                    nodes=key_nodes
+                    nodes=key_nodes,
+                    decode=decode,
                 )
             
             eval_metrics = {f'evaluation/{k}': v for k, v in eval_info.items()}
@@ -701,10 +713,10 @@ def main(_):
             else:
                 score = eval_metrics['evaluation/episode.return']
                 log_key = 'evaluation/episode.return'
-            wandb.log(eval_metrics, step=hilp_train_steps+i)
-            eval_logger.log(eval_metrics, step=hilp_train_steps+i)
+            wandb.log(eval_metrics, step=pretrain_steps+i)
+            eval_logger.log(eval_metrics, step=pretrain_steps+i)
             
-            return_logger.log({'evaluation/episode.return' :eval_metrics[log_key]}, step=hilp_train_steps+i)
+            return_logger.log({'evaluation/episode.return' :eval_metrics[log_key]}, step=pretrain_steps+i)
     train_logger.close()
     eval_logger.close()
     return_logger.close()

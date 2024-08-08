@@ -22,8 +22,11 @@ def build_keynodes(dataset, flags=None, episode_index= None, rep_obs=None):
     #         obs = obs[:, :9]
     #     elif 'calvin' in flags.env_name:
     #         obs = obs[:, :15]
-    
-    data_index = np.arange(len(obs))
+    if episode_index is None:
+        data_index, episode_index = np.arange(len(obs))
+    else:
+        data_index = np.arange(len(obs))
+        
     # if flags.sparse_data:
     #     assert int(flags.sparse_data) in [-7, -9, 0] # 'For small data setting, choose from the following : [-7, -9, 0]. [30%, 10%, 100%], respectively'
     #     if flags.sparse_data < 0:
