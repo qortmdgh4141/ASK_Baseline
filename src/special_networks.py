@@ -275,20 +275,36 @@ class LatentSubgoalModelDecode(nn.Module):
     kernel_init: Callable[[PRNGKey, Shape, Dtype], Array] = default_init()
     dropout_rate : float = 0.1
     rng : dict = jax.random.PRNGKey(0)
+    activate_final: int = False
+    
 
+    # def setup(self):
+    #     self.layers = [nn.Dense(size, kernel_init=self.kernel_init) for size in self.hidden_dim]
+    #     self.dropouts = [nn.Dropout(rate=self.dropout_rate, deterministic=False) for size in self.hidden_dim]
+    #     self.last_layer = nn.Dense(self.output_shape, kernel_init=self.kernel_init)
     @nn.compact
-    def __call__(self, state, z, train=True) -> jnp.ndarray:
+    def __call__(self, state, z, deterministic=False, rng=None) -> jnp.ndarray:
             
         x = jnp.concatenate([state, z], axis=-1)
         for i, size in enumerate(self.hidden_dim):
             x = nn.Dense(size, kernel_init = self.kernel_init)(x)
             x = self.activations(x)
-            x = nn.Dropout(rate=self.dropout_rate, deterministic=not train)(x, rng=self.rng)
+            x = nn.Dropout(rate=self.dropout_rate, deterministic=deterministic)(x, rng=rng)
                 
         if self.layer_norm:
             x = nn.LayerNorm()(x)
         
-        subgoal = nn.Dense(self.output_shape, kernel_init=self.kernel_init)(x)
+        
+        # for i, layer in enumerate(self.layers):
+        #     x = layer(x)
+        #     if i + 1 < len(self.layers) or self.activate_final:
+        #         x = self.activations(x)
+        #     x = self.dropouts[i](x)
+                
+        if self.layer_norm:
+            x = nn.LayerNorm()(x)
+        
+        subgoal = nn.Dense(self.output_shape, kernel_init = self.kernel_init)(x)
         
         return subgoal
 
@@ -775,9 +791,8 @@ class HierarchicalActorCriticGuider(nn.Module):
     def prior(self, observations, **kwargs):
         return self.networks['prior'](state=observations)
 
-    def decode(self, observations, latents, **kwargs):
-        
-        return self.networks['decode'](state=observations, z=latents)
+    def decode(self, observations, latents, deterministic=False, rngs=None, **kwargs):
+        return self.networks['decode'](state=observations, z=latents, deterministic=deterministic, rng=rngs)
 # ---------------------------------------------------------------------------------------------------------------
     # 네트워크 초기화
     def __call__(self, observations=None, actions=None, goals=None, latent=None):        

@@ -13,7 +13,7 @@ project="G-ant-ultra"
 
 extra_name="G_"
 
-gpu="1"
+gpu="0"
 start=0
 end_=3
 

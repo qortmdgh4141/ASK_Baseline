@@ -110,7 +110,7 @@ def evaluate_with_trajectories(
                     cur_obs_goal = plot_subgoal = jnp.concatenate([hilp_fn(observations=observation), cur_obs_subgoal], axis=-1)
                     
                 elif 'guider' in FLAGS.algo_name:
-                    cur_obs_goal = cur_obs_subgoal = decode(observations=observation, z=cur_obs_subgoal)
+                    cur_obs_goal = cur_obs_subgoal = decode(observations=observation, z=cur_obs_subgoal, deterministic=True)
                 else:
                     cur_obs_goal = plot_subgoal = cur_obs_subgoal
                 if config['use_keynode_in_eval_On']:

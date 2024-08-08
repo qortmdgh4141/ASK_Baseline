@@ -752,7 +752,9 @@ def compute_prior_loss(agent, batch, network_params):
     prior_mean, prior_std = agent.network(batch['observations'], method='prior', params=network_params)
     
     # recon loss
-    recon = agent.network(batch['observations'], z, method='decode', params=network_params)
+    recon = agent.network(batch['observations'], z, deterministic=False, rngs={'dropout':agent.rng}, method='decode', params=network_params)
+    agent = agent.replace(rng=jax.random.split(agent.rng, 1)[0])
+    
     recon_loss = jnp.square(recon - batch['low_goals']).mean(axis=-1).mean()
     
     # kl loss
@@ -1022,12 +1024,14 @@ class JointTrainAgent(flax.struct.PyTreeNode):
         else:
             return agent.network(observations=observations, goals=goals, method='hilp_value')
     
-    @jax.jit
+    # @jax.jit
     def get_decode(agent,
                             *,
                             observations: jnp.ndarray,
-                            z: jnp.ndarray) -> jnp.ndarray:
-        return agent.network(observations=observations, latents=z, train=False, method='decode')
+                            z: jnp.ndarray,
+                            deterministic: bool=False) -> jnp.ndarray:
+        return agent.network(observations=observations, latents=z, deterministic=deterministic, rngs={'dropout':agent.rng}, method='decode')
+    get_decode = jax.jit(get_decode, static_argnames=('deterministic'))
     
     @jax.jit
     def get_policy_rep(agent,
@@ -1091,7 +1095,8 @@ def create_learner(
 
         rng = jax.random.PRNGKey(seed)
         rng, actor_key, high_actor_key, critic_key, qf_key = jax.random.split(rng, 5)
-
+        rngs = {'params' : qf_key, 'dropout' : rng}
+        
         qf_state_encoder = None
         qf_goal_encoder = None
         high_qf_state_encoder = None
@@ -1151,7 +1156,7 @@ def create_learner(
         high_action_dim = flag.latent_dim if not flag.high_action_in_hilp else flag.hilp_skill_dim
         high_actor_def = Policy(actor_hidden_dims, action_dim=high_action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
 
-        obs_dim = observations.shape[-1] if flag.hilp_decoder else 0
+        obs_dim = observations.shape[-1]
 
         hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, obs_dim=obs_dim)
         
@@ -1195,7 +1200,7 @@ def create_learner(
         
         # decode.init(jax.random.PRNGKey(1))
         
-        network_params = network_def.init(qf_key, observations, actions, observations)['params']
+        network_params = network_def.init(rngs, observations, actions, observations)['params']
         network = TrainState.create(network_def, network_params, tx=network_tx)
         params = unfreeze(network.params)
         params['networks_target_qf'] = params['networks_qf']
