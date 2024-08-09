@@ -68,7 +68,7 @@ def evaluate_with_trajectories(
             obs_goal = base_observation.copy()
             obs_goal[:2] = goal
             node_dim = np.arange(2)
-            interval, min_dist = 10, 4
+            interval, min_dist = FLAGS.way_steps, 4
         elif 'kitchen' in env_name:
             observation, obs_goal = observation[:30], observation[30:]
             obs_goal[:9] = base_observation[:9]
@@ -101,8 +101,8 @@ def evaluate_with_trajectories(
             
         while not done:
                
-            if h_step == interval or dist < init_dist * 0.5:
-            # if h_step == interval or step==0:
+            # if h_step == interval or dist < init_dist * 0.5:
+            if h_step == interval or step==0:
                 cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=eval_temperature)
                 if FLAGS.high_action_in_hilp or 'cql' in FLAGS.algo_name:
                     # cur_obs_goal = plot_subgoal = cur_obs_subgoal
@@ -110,7 +110,7 @@ def evaluate_with_trajectories(
                     cur_obs_goal = plot_subgoal = jnp.concatenate([hilp_fn(observations=observation), cur_obs_subgoal], axis=-1)
                     
                 elif 'guider' in FLAGS.algo_name:
-                    cur_obs_goal = cur_obs_subgoal = decode(observations=observation, z=cur_obs_subgoal, deterministic=True)
+                    cur_obs_goal = cur_obs_subgoal = plot_subgoal = decode(observations=observation, z=cur_obs_subgoal, deterministic=True)
                 else:
                     cur_obs_goal = plot_subgoal = cur_obs_subgoal
                 if config['use_keynode_in_eval_On']:
@@ -129,11 +129,11 @@ def evaluate_with_trajectories(
                         _, I = index.search(np.array(hilp_fn(observations=cur_obs_subgoal), dtype=np.float32).reshape(1,-1), 1)
                         cur_obs_goal = cur_obs_key_node = jnp.array(nodes.centroids[I[0,0]])
                         
-                if FLAGS.relative_dist_in_eval_On:
-                    if FLAGS.high_action_in_hilp:
-                        init_dist = np.linalg.norm(cur_obs_subgoal - hilp_fn(observations=observation))
-                    else:
-                        init_dist = np.linalg.norm(hilp_fn(observations=cur_obs_subgoal) - hilp_fn(observations=observation))
+                # if FLAGS.relative_dist_in_eval_On:
+                #     if FLAGS.high_action_in_hilp:
+                #         init_dist = np.linalg.norm(cur_obs_subgoal - hilp_fn(observations=observation))
+                #     else:
+                #         init_dist = np.linalg.norm(hilp_fn(observations=cur_obs_subgoal) - hilp_fn(observations=observation))
                 
 
                 # if config['use_keynode_in_eval_On']:
@@ -147,13 +147,13 @@ def evaluate_with_trajectories(
                     
                 h_step = 0
                 
-            if FLAGS.relative_dist_in_eval_On:
-                if FLAGS.high_action_in_hilp:
-                    dist = np.linalg.norm(cur_obs_subgoal - hilp_fn(observations=observation))
-                else:
-                    dist = np.linalg.norm(hilp_fn(observations=cur_obs_subgoal) - hilp_fn(observations=observation))
-            else:
-                dist = np.linalg.norm(cur_obs_goal[node_dim] - observation[node_dim])
+            # if FLAGS.relative_dist_in_eval_On:
+            #     if FLAGS.high_action_in_hilp:
+            #         dist = np.linalg.norm(cur_obs_subgoal - hilp_fn(observations=observation))
+            #     else:
+            #         dist = np.linalg.norm(hilp_fn(observations=cur_obs_subgoal) - hilp_fn(observations=observation))
+            # else:
+            #     dist = np.linalg.norm(cur_obs_goal[node_dim] - observation[node_dim])
                                        
             h_step +=1
             h_steps.append(h_step)
@@ -201,7 +201,7 @@ def evaluate_with_trajectories(
                     size = 240
                     box_size = 0.015
                     cur_frame = env.render(mode='rgb_array', width=size, height=size).transpose(2, 0, 1).copy()
-                    if ('large' in env_name or 'ultra' in env_name) and not FLAGS.high_action_in_hilp and FLAGS.algo_name !='guider' :
+                    if ('large' in env_name or 'ultra' in env_name) and not FLAGS.high_action_in_hilp:
                         def xy_to_pixxy(x, y):
                             if 'large' in env_name:
                                 pixx = (x / 36) * (0.93 - 0.07) + 0.07

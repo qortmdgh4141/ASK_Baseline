@@ -408,7 +408,6 @@ def compute_high_qf_loss(agent, batch, network_params):
     else:
         cql_random_actions = jax.random.uniform(key=agent.rng, shape=(batch_size, agent.config['cql_n_actions'], z.shape[-1]),minval=z.min(axis=0), maxval=z.max(axis=0))
         
-    agent = agent.replace(rng=jax.random.split(agent.rng, 1)[0])
     
     cur_dist = agent.network(observations, high_goals, state_rep_grad=True, goal_rep_grad=False, method='high_actor', params=network_params)
     cql_current_actions, cql_current_log_pi = supply_rng(cur_dist.sample_and_log_prob)()
@@ -753,7 +752,6 @@ def compute_prior_loss(agent, batch, network_params):
     
     # recon loss
     recon = agent.network(batch['observations'], z, deterministic=False, rngs={'dropout':agent.rng}, method='decode', params=network_params)
-    agent = agent.replace(rng=jax.random.split(agent.rng, 1)[0])
     
     recon_loss = jnp.square(recon - batch['low_goals']).mean(axis=-1).mean()
     
@@ -788,14 +786,8 @@ class JointTrainAgent(flax.struct.PyTreeNode):
         def loss_fn(network_params):
             info = {}
             
-            # if hilp_update:
-            #     prior_update, qf_update, actor_update, high_actor_update = True, False, False, False
-            # else:
-            #     prior_update, qf_update, actor_update, high_actor_update = False, True, True, True
-                
             # HILP Representation
             if hilp_update:
-            # if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
                 hilp_value_loss, hilp_value_info = hilp_compute_value_loss_decode(agent, pretrain_batch, network_params)
                 for k, v in hilp_value_info.items():
                     info[f'hilp_value/{k}'] = v
@@ -804,7 +796,6 @@ class JointTrainAgent(flax.struct.PyTreeNode):
 
             # Prior Representation
             if prior_update:
-            # if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
                 prior_loss, prior_info = compute_prior_loss(agent, pretrain_batch, network_params)
                 for k, v in prior_info.items():
                     info[f'prior/{k}'] = v
@@ -847,15 +838,15 @@ class JointTrainAgent(flax.struct.PyTreeNode):
 
             return loss, info
 
-        def low_alpha_loss_fn(network_params):
-            info = {}
+        # def low_alpha_loss_fn(network_params):
+        #     info = {}
                
-            # alpha function
-            low_alpha_loss, alpha_info = compute_low_alpha_loss(agent, pretrain_batch, network_params)
-            for k, v in alpha_info.items():
-                info[f'alpha/{k}'] = v
+        #     # alpha function
+        #     low_alpha_loss, alpha_info = compute_low_alpha_loss(agent, pretrain_batch, network_params)
+        #     for k, v in alpha_info.items():
+        #         info[f'alpha/{k}'] = v
 
-            return low_alpha_loss, info
+        #     return low_alpha_loss, info
 
         def high_alpha_loss_fn(network_params):
             info = {}
@@ -867,15 +858,15 @@ class JointTrainAgent(flax.struct.PyTreeNode):
 
             return high_alpha_loss, info
 
-        def low_alpha_prime_loss_fn(network_params):
-            info = {}
+        # def low_alpha_prime_loss_fn(network_params):
+        #     info = {}
                
-            # alpha function
-            low_alpha_prime_loss, alpha_prime_info = compute_low_alpha_prime_loss(agent, pretrain_batch, network_params)
-            for k, v in alpha_prime_info.items():
-                info[f'alpha/{k}'] = v
+        #     # alpha function
+        #     low_alpha_prime_loss, alpha_prime_info = compute_low_alpha_prime_loss(agent, pretrain_batch, network_params)
+        #     for k, v in alpha_prime_info.items():
+        #         info[f'alpha/{k}'] = v
 
-            return low_alpha_prime_loss, info
+        #     return low_alpha_prime_loss, info
 
         def high_alpha_prime_loss_fn(network_params):
             info = {}
@@ -887,48 +878,44 @@ class JointTrainAgent(flax.struct.PyTreeNode):
 
             return high_alpha_prime_loss, info
         
+        # if qf_update:
+        #     new_target_params = jax.tree_map(
+        #         lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_qf'], agent.network.params['networks_target_qf']
+        #     )
+        # if high_qf_update:
+        #     new_high_target_params = jax.tree_map(
+        #         lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_high_qf'], agent.network.params['networks_high_target_qf']
+        #     )
+        # Q fn, policy update
+        new_network, info = agent.network.apply_loss_fn(loss_fn=loss_fn, has_aux=True)
+        # agent = agent.replace(network=new_network)
+        
+        new_params = unfreeze(new_network.params)
+        
+        # HILP update
+        if hilp_update:
+            hilp_new_target_params = jax.tree_map(
+            lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_hilp_value'], agent.network.params['networks_hilp_target_value']
+            )
+            new_params['networks_hilp_target_value'] = hilp_new_target_params
+            
+            hilp_new_params = jax.tree_map(
+            lambda op, np: np * agent.config['target_update_rate'] + op * (1 - agent.config['target_update_rate']), agent.network.params['networks_hilp_value'], agent.params['networks_hilp_value']
+            )
+            new_params['networks_hilp_target_value'] = hilp_new_params
+            
         if qf_update:
             new_target_params = jax.tree_map(
                 lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_qf'], agent.network.params['networks_target_qf']
             )
+            new_params['networks_target_qf'] = new_target_params
+        
         if high_qf_update:
             new_high_target_params = jax.tree_map(
                 lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_high_qf'], agent.network.params['networks_high_target_qf']
             )
-        # Q fn, policy update
-        new_network, info = agent.network.apply_loss_fn(loss_fn=loss_fn, has_aux=True)
-        agent = agent.replace(network=new_network)
+            new_params['networks_high_target_qf'] = new_high_target_params
         
-        if qf_update:
-            params = unfreeze(new_network.params)
-            params['networks_target_qf'] = new_target_params
-            new_network = new_network.replace(params=freeze(params))
-        
-        if high_qf_update:
-            params = unfreeze(new_network.params)
-            params['networks_high_target_qf'] = new_high_target_params
-            new_network = new_network.replace(params=freeze(params))
-        
-        # additional update
-        new_params = unfreeze(agent.network.params)
-        
-        # HILP update
-        # if agent.config['use_rep'] in ["hilp_subgoal_encoder", "hilp_encoder"]:
-        if hilp_update:
-            params = unfreeze(new_network.params)
-            
-            hilp_new_target_params = jax.tree_map(
-            lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_hilp_value'], agent.network.params['networks_hilp_target_value']
-            )
-            params['networks_hilp_target_value'] = hilp_new_target_params
-            
-            hilp_new_params = jax.tree_map(
-            lambda op, np: np * agent.config['target_update_rate'] + op * (1 - agent.config['target_update_rate']), agent.network.params['networks_hilp_value'], new_network.params['networks_hilp_value']
-            )
-            params['networks_hilp_target_value'] = hilp_new_params
-            new_network = new_network.replace(params=freeze(params))
-        
-        elif high_qf_update:
             # low alpha prime
             # network, low_alpha_prime_info = agent.network.apply_loss_fn(loss_fn=low_alpha_prime_loss_fn, has_aux=True)
             # info.update(low_alpha_prime_info)        
@@ -949,11 +936,10 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             info.update(high_alpha_info)
             new_params['networks_high_log_alpha'] = network.params['networks_high_log_alpha']
             
-            new_network = new_network.replace(params=freeze(new_params))
             # pass
+        new_network = new_network.replace(params=freeze(new_params))
         
-        return agent.replace(network=new_network), info
-        # return agent.replace(params=freeze(new_params)), info
+        return agent.replace(network=new_network, rng=jax.random.split(agent.rng, 1)[0]), info
     pretrain_update = jax.jit(pretrain_update, static_argnames=('qf_update', 'actor_update', 'alpha_update', 'high_qf_update', 'high_actor_update', 'hilp_update', 'prior_update'))
 
     def sample_actions(agent,

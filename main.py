@@ -607,13 +607,13 @@ def main(_):
             
             
     
-    update = dict(qf_update=False, actor_update=False, alpha_update=True, high_actor_update=True, high_qf_update=True, hilp_update=False, prior_update=False)
-    
+    update = dict(qf_update=True, actor_update=True, alpha_update=True, high_actor_update=True, high_qf_update=True, hilp_update=False, prior_update=False)
+    total_steps = 7*10**5
     for i in tqdm.tqdm(range(1, total_steps + 1),
                    desc="main_train",
                    smoothing=0.1,
                    dynamic_ncols=True):
-        if i == 5e5:
+        if i == 3*10**5:
             update = dict(qf_update=True, actor_update=True, alpha_update=False, high_actor_update=False, high_qf_update=False, hilp_update=False, prior_update=False)
             
         pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size, **update)
