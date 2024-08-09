@@ -82,15 +82,16 @@ def compute_actor_loss(agent, batch, network_params):
     v = jnp.minimum(v1, v2)
     
     adv = q - v
-    exp_a = jnp.clip(jnp.exp(adv), 0, 100)
+    exp_a = jnp.clip(jnp.exp(adv), 0, 10)
     exp_a = jax.lax.stop_gradient(exp_a)
+    
     # mse loss
     mse_loss = jnp.square(new_actions - batch['actions']).mean()
-    # actor_loss = (exp_a * mse_loss).mean()
+    actor_loss = (exp_a * mse_loss).mean()
     
     # awac loss
-    log_probs = dist.log_prob(batch['actions'])
-    actor_loss = -(exp_a * log_probs).mean()
+    # log_probs = dist.log_prob(batch['actions'])
+    # actor_loss = -(exp_a * log_probs).mean()
     
     # guider style - kl loss
     # kl_loss = compute_kl(dist.loc, dist.scale_diag, batch['actions'])
@@ -111,7 +112,7 @@ def compute_actor_loss(agent, batch, network_params):
         'log_pi' : log_pi.mean(),
         # 'target_pi' : target_pi.mean(),
         'mse': mse_loss.mean(),
-        'bc_log_probs': log_probs.mean(),
+        # 'bc_log_probs': log_probs.mean(),
         # 'kl_loss': kl_loss.mean(),
         'low_scale': dist.scale_diag.mean(),
         
@@ -408,6 +409,7 @@ def compute_high_qf_loss(agent, batch, network_params):
     else:
         cql_random_actions = jax.random.uniform(key=agent.rng, shape=(batch_size, agent.config['cql_n_actions'], z.shape[-1]),minval=z.min(axis=0), maxval=z.max(axis=0))
         
+    agent = agent.replace(rng=jax.random.split(agent.rng, 1)[0])
     
     cur_dist = agent.network(observations, high_goals, state_rep_grad=True, goal_rep_grad=False, method='high_actor', params=network_params)
     cql_current_actions, cql_current_log_pi = supply_rng(cur_dist.sample_and_log_prob)()
@@ -752,7 +754,7 @@ def compute_prior_loss(agent, batch, network_params):
     
     # recon loss
     recon = agent.network(batch['observations'], z, deterministic=False, rngs={'dropout':agent.rng}, method='decode', params=network_params)
-    
+    agent = agent.replace(rng=jax.random.split(agent.rng, 1)[0])
     recon_loss = jnp.square(recon - batch['low_goals']).mean(axis=-1).mean()
     
     # kl loss
@@ -939,7 +941,8 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             # pass
         new_network = new_network.replace(params=freeze(new_params))
         
-        return agent.replace(network=new_network, rng=jax.random.split(agent.rng, 1)[0]), info
+        return agent.replace(network=new_network), info
+        # return agent.replace(network=new_network, rng=jax.random.split(agent.rng, 1)[0]), info
     pretrain_update = jax.jit(pretrain_update, static_argnames=('qf_update', 'actor_update', 'alpha_update', 'high_qf_update', 'high_actor_update', 'hilp_update', 'prior_update'))
 
     def sample_actions(agent,
