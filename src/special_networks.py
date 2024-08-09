@@ -785,8 +785,8 @@ class HierarchicalActorCriticGuider(nn.Module):
         return self.networks['hilp_value'].get_phi(observations)
 # ---------------------------------------------------------------------------------------------------------------
 # guider latent model
-    def latent(self, observations, targets, **kwargs):
-        return self.networks['latent'](state=observations, targets=targets)
+    def latent(self, observations, targets, seed=None, **kwargs):
+        return self.networks['latent'](state=observations, targets=targets, seed=seed)
     
     def prior(self, observations, **kwargs):
         return self.networks['prior'](state=observations)

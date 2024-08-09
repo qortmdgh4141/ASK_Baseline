@@ -27,7 +27,7 @@ def expectile_loss(adv, diff, expectile=0.7):
 
 def compute_kl(post_mean, post_std, prior_mean, prior_std=1):
     kl = jnp.log(prior_std) - jnp.log(post_std) + 0.5 * ((post_std**2 + (post_mean - prior_mean)**2) / prior_std**2 - 1)
-    return jnp.mean(kl, axis=-1)
+    return jnp.mean(kl)
 
 def compute_actor_loss(agent, batch, network_params):
     # sac policy loss
@@ -170,7 +170,7 @@ def compute_high_actor_loss(agent, batch, network_params):
     # v = jax.lax.stop_gradient(v)
     # actor_loss = (-v + alpha*mse_loss).mean()
 
-    prior_mean, prior_std = agent.network(batch['observations'], state_rep_grad=True, goal_rep_grad=False, method='prior')
+    prior_mean, prior_std = agent.network(batch['observations'], method='prior')
 
     # kl loss
     kl_loss = compute_kl(dist.loc, dist.scale_diag, prior_mean, prior_std)
@@ -409,7 +409,6 @@ def compute_high_qf_loss(agent, batch, network_params):
     else:
         cql_random_actions = jax.random.uniform(key=agent.rng, shape=(batch_size, agent.config['cql_n_actions'], z.shape[-1]),minval=z.min(axis=0), maxval=z.max(axis=0))
         
-    agent = agent.replace(rng=jax.random.split(agent.rng, 1)[0])
     
     cur_dist = agent.network(observations, high_goals, state_rep_grad=True, goal_rep_grad=False, method='high_actor', params=network_params)
     cql_current_actions, cql_current_log_pi = supply_rng(cur_dist.sample_and_log_prob)()
@@ -749,17 +748,16 @@ def hilp_compute_value_loss_decode(agent, batch, network_params):
 def compute_prior_loss(agent, batch, network_params):
     # kl balance, beta, latent dim
     
-    z, z_mean, z_std = agent.network(batch['observations'], batch['low_goals'], method='latent', params=network_params)
+    z, z_mean, z_std = agent.network(batch['observations'], batch['low_goals'], method='latent', params=network_params, seed=agent.rng)
     prior_mean, prior_std = agent.network(batch['observations'], method='prior', params=network_params)
     
     # recon loss
     recon = agent.network(batch['observations'], z, deterministic=False, rngs={'dropout':agent.rng}, method='decode', params=network_params)
-    agent = agent.replace(rng=jax.random.split(agent.rng, 1)[0])
-    recon_loss = jnp.square(recon - batch['low_goals']).mean(axis=-1).mean()
+    recon_loss = jnp.square(recon - batch['low_goals']).mean()
     
     # kl loss
-    regul_loss = compute_kl(z_mean, z_std, jax.lax.stop_gradient(prior_mean), jax.lax.stop_gradient(prior_std)).mean()
-    prior_loss_ = compute_kl(jax.lax.stop_gradient(z_mean), jax.lax.stop_gradient(z_std), prior_mean, prior_std).mean()
+    regul_loss = compute_kl(z_mean, z_std, jax.lax.stop_gradient(prior_mean), jax.lax.stop_gradient(prior_std))
+    prior_loss_ = compute_kl(jax.lax.stop_gradient(z_mean), jax.lax.stop_gradient(z_std), prior_mean, prior_std)
     
     elbo_loss = recon_loss + agent.config['beta'] * (1 - agent.config['kl_balance']) * regul_loss
     prior_loss = agent.config['beta'] * agent.config['kl_balance'] * prior_loss_
@@ -941,7 +939,7 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             # pass
         new_network = new_network.replace(params=freeze(new_params))
         
-        return agent.replace(network=new_network), info
+        return agent.replace(network=new_network, rng=jax.random.split(agent.rng, 1)[0]), info
         # return agent.replace(network=new_network, rng=jax.random.split(agent.rng, 1)[0]), info
     pretrain_update = jax.jit(pretrain_update, static_argnames=('qf_update', 'actor_update', 'alpha_update', 'high_qf_update', 'high_actor_update', 'hilp_update', 'prior_update'))
 
