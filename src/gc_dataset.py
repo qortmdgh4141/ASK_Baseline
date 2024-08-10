@@ -115,8 +115,9 @@ class GCSDataset(GCDataset):
         # goal for value function training
         goal_indx = self.sample_goals(indx)
         
-        relable = (np.random.rand(batch_size) < self.high_p_relable)
-        goal_indx = np.where(relable, indx, goal_indx)
+        if kwargs.get('prior_update') == False:
+            relable = (np.random.rand(batch_size) < self.high_p_relable)
+            goal_indx = np.where(relable, indx, goal_indx)
             
         success = (indx == goal_indx)
         batch['rewards'] = success.astype(float) * self.reward_scale + self.reward_shift
@@ -133,11 +134,13 @@ class GCSDataset(GCDataset):
         final_state_indx = self.terminal_locs[np.searchsorted(self.terminal_locs, indx)]
         # subgoal sampled from its own trajectory for low level training
         way_indx = np.minimum(indx + self.way_steps, final_state_indx)
-        batch['low_goals'] = jax.tree_map(lambda arr: arr[way_indx], self.dataset['observations'])
+        batch['low_goals'] = jax.tree_map(lambda arr: arr[way_indx,:2], self.dataset['observations'])
         if self.final_goal:
-            batch['final_goals'] = jax.tree_map(lambda arr: arr[final_state_indx], self.dataset['observations'])
+            batch['final_goals'] = jax.tree_map(lambda arr: arr[final_state_indx,:2], self.dataset['observations'])
         
         if kwargs.get('high_actor_update') == True:
+            batch['high_observations'] = jax.tree_map(lambda arr: arr[:,:2], batch['observations'])
+            
             # subgoal sampled from its own trajectory with distance ratio for high level training
             distance = np.random.rand(batch_size)
             high_traj_goal_indx = np.round((np.minimum(indx + 1, final_state_indx) * distance + final_state_indx * (1 - distance))).astype(int)
@@ -151,9 +154,9 @@ class GCSDataset(GCDataset):
             high_goal_idx = np.where(pick_random, high_random_goal_indx, high_traj_goal_indx)
             high_target_idx = np.where(pick_random, high_random_target_indx, high_traj_target_indx)
             
-            batch['high_goals'] = jax.tree_map(lambda arr: arr[high_goal_idx], self.dataset['observations'])
+            batch['high_goals'] = jax.tree_map(lambda arr: arr[high_goal_idx,:2], self.dataset['observations'])
             
-            batch['high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx], self.dataset['observations'])
+            batch['high_targets'] = jax.tree_map(lambda arr: arr[high_target_idx,:2], self.dataset['observations'])
             
             # goal_indx = self.sample_goals(indx)
             # high_success = (high_target_idx == high_goal_idx)

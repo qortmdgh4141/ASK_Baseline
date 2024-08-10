@@ -145,10 +145,10 @@ def compute_high_actor_loss(agent, batch, network_params):
     # _, z, _ = agent.network(batch['observations'], batch['high_goals'], state_rep_grad=True, goal_rep_grad=False, method='latent', params=network_params)
     
     # cur q    
-    dist = agent.network(batch['observations'], batch['high_goals'], state_rep_grad=True, goal_rep_grad=False, method='high_actor', params=network_params)
+    dist = agent.network(batch['high_observations'], batch['high_goals'], state_rep_grad=True, goal_rep_grad=False, method='high_actor', params=network_params)
     new_actions, log_pi = supply_rng(dist.sample_and_log_prob)()
     
-    v1, v2 = agent.network(batch['observations'], new_actions, batch['high_goals'], method='high_qf')
+    v1, v2 = agent.network(batch['high_observations'], new_actions, batch['high_goals'], method='high_qf')
     v = jnp.minimum(v1, v2)
     
     # adv = q - v
@@ -170,7 +170,7 @@ def compute_high_actor_loss(agent, batch, network_params):
     # v = jax.lax.stop_gradient(v)
     # actor_loss = (-v + alpha*mse_loss).mean()
 
-    prior_mean, prior_std = agent.network(batch['observations'], method='prior')
+    prior_mean, prior_std = agent.network(batch['high_observations'], method='prior')
 
     # kl loss
     kl_loss = compute_kl(dist.loc, dist.scale_diag, prior_mean, prior_std)
@@ -218,7 +218,7 @@ def compute_qf_loss(agent, batch, network_params):
         
         
     else:
-        subgoals = batch['goals']
+        subgoals = batch['goals'][:,:2]
     
     if agent.config['final_goal']:
         next_dist = agent.network(batch['next_observations'], subgoals, batch['final_goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
@@ -354,7 +354,7 @@ def compute_high_qf_loss(agent, batch, network_params):
     if agent.config['high_action_in_hilp']:
         batch_size, obs_dim = batch['rep_observations'].shape
     else:   
-        batch_size, obs_dim = batch['observations'].shape
+        batch_size, obs_dim = batch['high_observations'].shape
     
 
     # sac-q loss
@@ -381,16 +381,16 @@ def compute_high_qf_loss(agent, batch, network_params):
     target_q = jax.lax.stop_gradient(target_q)
 
     # pred q
-    _, z, _ = agent.network(batch['observations'], batch['high_targets'], state_rep_grad=True, goal_rep_grad=False, method='latent')
+    _, z, _ = agent.network(batch['high_observations'], batch['high_targets'], method='latent')
 
     if agent.config['high_action_in_hilp']:
         # subgoals = (batch['rep_low_goals'] - batch['rep_observations']) / jnp.linalg.norm(batch['rep_low_goals'] - batch['rep_observations'], axis=-1, keepdims=True)
         rep_high_targets = batch['rep_high_targets']
         # rep_high_targets = batch['rep_high_targets'] / jnp.linalg.norm(batch['rep_high_targets'], axis=-1, keepdims=True)
         
-        (q1, q2) = agent.network(batch['observations'], rep_high_targets, batch['high_goals'], method='high_qf', params=network_params)
+        (q1, q2) = agent.network(batch['high_observations'], rep_high_targets, batch['high_goals'], method='high_qf', params=network_params)
     else:
-        (q1, q2) = agent.network(batch['observations'], z, batch['high_goals'], method='high_qf', params=network_params)
+        (q1, q2) = agent.network(batch['high_observations'], z, batch['high_goals'], method='high_qf', params=network_params)
 
     q_loss1 = jnp.square(q1 - target_q).mean()
     q_loss2 = jnp.square(q2 - target_q).mean()
@@ -398,7 +398,7 @@ def compute_high_qf_loss(agent, batch, network_params):
 
     # cql loss
     # dimension : (batch_size, cql_n_actions, obs_dim)
-    observations =  extend_and_repeat(batch['observations'], 1, agent.config['cql_n_actions'])
+    observations =  extend_and_repeat(batch['high_observations'], 1, agent.config['cql_n_actions'])
     high_targets =  extend_and_repeat(batch['high_targets'], 1, agent.config['cql_n_actions'])
     high_goals =  extend_and_repeat(batch['high_goals'], 1, agent.config['cql_n_actions'])
     
@@ -433,7 +433,7 @@ def compute_high_qf_loss(agent, batch, network_params):
 
     # key node  cql    
     if agent.config['key_node_q']:
-        (key_q1, key_q2) = agent.network(batch['observations'], batch['high_target_key_node'], batch['high_goals'], method='high_qf', params=network_params)
+        (key_q1, key_q2) = agent.network(batch['high_observations'], batch['high_target_key_node'], batch['high_goals'], method='high_qf', params=network_params)
         cql_qf1_diff = jnp.clip(cql_qf1_ood - (key_q1.mean()).mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
         cql_qf2_diff = jnp.clip(cql_qf2_ood - (key_q2.mean()).mean(), agent.config['cql_clip_diff_min'], agent.config['cql_clip_diff_max'],).mean()
     else:
@@ -509,8 +509,7 @@ def compute_high_alpha_loss(agent, batch, network_params):
     
     # kl loss alpha
     high_alpha = jnp.clip(jnp.exp(agent.network(method='high_log_alpha', params=network_params)), 0, 1e6)
-    high_log_pi = jax.lax.stop_gradient(batch['high_kl_loss'])
-    high_alpha_loss = high_alpha * (agent.config['high_target_divergence'] - high_log_pi).mean()
+    high_alpha_loss = high_alpha * (jax.lax.stop_gradient(agent.config['high_target_divergence'] - batch['high_kl_loss'])).mean()
     
     
     return high_alpha_loss, {
@@ -748,12 +747,15 @@ def hilp_compute_value_loss_decode(agent, batch, network_params):
 def compute_prior_loss(agent, batch, network_params):
     # kl balance, beta, latent dim
     
-    z, z_mean, z_std = agent.network(batch['observations'], batch['low_goals'], method='latent', params=network_params, seed=agent.rng)
-    prior_mean, prior_std = agent.network(batch['observations'], method='prior', params=network_params)
+    observations = jax.tree_map(lambda x: x[:,:2], batch['observations'])
+    low_goals = jax.tree_map(lambda x: x[:,:2], batch['low_goals'])
+    
+    z, z_mean, z_std = agent.network(observations, low_goals, method='latent', params=network_params, seed=agent.rng)
+    prior_mean, prior_std = agent.network(observations, method='prior', params=network_params)
     
     # recon loss
-    recon = agent.network(batch['observations'], z, deterministic=False, rngs={'dropout':agent.rng}, method='decode', params=network_params)
-    recon_loss = jnp.square(recon - batch['low_goals']).mean()
+    recon = agent.network(observations, z, deterministic=False, rngs={'dropout':agent.rng}, method='decode', params=network_params)
+    recon_loss = jnp.square(recon - low_goals).mean()
     
     # kl loss
     regul_loss = compute_kl(z_mean, z_std, jax.lax.stop_gradient(prior_mean), jax.lax.stop_gradient(prior_std))
@@ -1019,6 +1021,12 @@ class JointTrainAgent(flax.struct.PyTreeNode):
                             deterministic: bool=False) -> jnp.ndarray:
         return agent.network(observations=observations, latents=z, deterministic=deterministic, rngs={'dropout':agent.rng}, method='decode')
     get_decode = jax.jit(get_decode, static_argnames=('deterministic'))
+
+    @jax.jit
+    def get_prior(agent,
+                            *,
+                            observations: jnp.ndarray) -> jnp.ndarray:
+        return agent.network(observations=observations, method='prior')
     
     @jax.jit
     def get_policy_rep(agent,
@@ -1073,7 +1081,7 @@ def create_learner(
         alpha_multiplier = 1,
         cql_low_target_action_gap = 1,
         cql_high_target_action_gap = 5,
-        high_target_divergence = 1,  
+        high_target_divergence = 2,  
         beta = 0.1,
         kl_balance=0.8,      
         **kwargs):
@@ -1144,11 +1152,11 @@ def create_learner(
         high_actor_def = Policy(actor_hidden_dims, action_dim=high_action_dim, log_std_min=-5.0, state_dependent_std=False, tanh_squash_distribution=False)
 
         obs_dim = observations.shape[-1]
-
+        goal_space_dim = 2
         hilp_value_goal_encoder = HILP_GoalConditionedPhiValue(hidden_dims=value_hidden_dims, use_layer_norm=use_layer_norm, ensemble=True, skill_dim=flag.hilp_skill_dim, obs_dim=obs_dim)
         
         latent = LatentSubgoalModel(hidden_dim=actor_hidden_dims, output_shape=flag.latent_dim)
-        decode = LatentSubgoalModelDecode(hidden_dim=actor_hidden_dims, output_shape=obs_dim)
+        decode = LatentSubgoalModelDecode(hidden_dim=actor_hidden_dims, output_shape=goal_space_dim)
         prior = PriorModel(hidden_dim=actor_hidden_dims, output_shape=flag.latent_dim)
 
         network_def = HierarchicalActorCriticGuider(

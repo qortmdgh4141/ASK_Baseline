@@ -1222,6 +1222,83 @@ def plot_q_map(agent, base_observation, goal_info, i, g_start_time, pretrain_bat
     
     return value_map
 
+def plot_decode_map(agent, base_observation, goal_info, i, g_start_time, pretrain_batch, transition_index=None, trajs=None):
+    if trajs is not None:
+        subgoals = []
+        obs = []
+        for j, t in enumerate(trajs):
+            subgoals.extend(t['cur_obs_subgoal'])
+            obs.extend(t['observation'])
+        subgoals = np.array(subgoals).reshape(-1,29)
+        obs = np.array(obs).reshape(-1,29)
+    
+    
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    
+    index = np.random.choice(pretrain_batch['observations'].shape[0], size=5)
+    
+    observations = pretrain_batch['observations'][index,:2]
+    low_goals = pretrain_batch['low_goals'][index,:2]
+    
+    mean, std = agent.get_prior(observations=observations)
+    z, _, _ = agent.network(observations=observations, targets=low_goals, method='latent', seed=agent.rng)
+    recon_latent = agent.get_decode(observations=observations, z=mean)
+    recon_prior = agent.get_decode(observations=observations, z=z)
+    
+    prior_x, prior_y = recon_prior[:,0], recon_prior[:,1]
+    latent_x, latent_y = recon_latent[:,0], recon_latent[:,1]
+    real_x, real_y = pretrain_batch['observations'][index,0], pretrain_batch['observations'][index,1]
+    real_subgoal_x, real_subgoal_y = pretrain_batch['low_goals'][index,0], pretrain_batch['low_goals'][index,1]
+    
+    sc1 = axes[0,0].scatter(real_x, real_y)
+    sc1 = axes[0,0].scatter(prior_x, prior_y)
+    sc1 = axes[0,0].scatter(latent_x, latent_y)
+    sc1 = axes[0,0].scatter(real_subgoal_x, real_subgoal_y)
+    max_x, max_y = pretrain_batch['observations'][:,0].max(), pretrain_batch['observations'][:,1].max()
+    axes[0,0].set_xlim([-2,max_x])
+    axes[0,0].set_ylim([-2,max_y])
+    
+    axes[0,0].set_title('decode state, real obs(b), prior(o), latent(g), subgoals(r)')
+    
+    obs = [base_observation[:2]]
+    for i in range(4):
+        base_mean, std = agent.get_prior(observations=base_observation[:2])
+        recon_base = agent.get_decode(observations=base_observation[:2], z=base_mean)
+        obs.append(recon_base)
+        base_observation = recon_base
+    obs = np.array(obs)
+    sc2 = axes[0,1].scatter(obs[:-1,0], obs[:-1,1])
+    sc2 = axes[0,1].scatter(obs[1:,0], obs[1:,1])
+
+    
+    axes[0,1].set_xlim([-2,max_x])
+    axes[0,1].set_ylim([-2,max_y])
+    axes[0,1].set_title('decode base_obs, real obs(b), prior(o)')
+    
+    
+    import os
+    
+    dir_name = os.path.dirname(os.path.dirname(__file__))
+    save_path = os.path.join(dir_name, 'decode ', g_start_time)
+    os.makedirs(save_path, exist_ok=True)
+    plt.savefig(os.path.join(save_path, f'sampled_obs_img_{i}.png'), format="PNG", dpi=300)
+    # plt.close()
+    
+    
+    import io
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+
+    # Read the buffer into a PIL image and convert to NumPy array
+    from PIL import Image
+    decode_map = Image.open(buf)
+    decode_map = np.array(decode_map)
+    
+    
+    return decode_map
+
 def get_encoder():
     from transformers import AutoImageProcessor, FlaxResNetModel
     from functools import partial

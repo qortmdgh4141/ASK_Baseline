@@ -25,7 +25,7 @@ from functools import partial
 from src.gc_dataset import GCSDataset
 from src.agents import ask as learner
 from ml_collections import config_flags
-from src.utils import record_video, CsvLogger, plot_value_map, plot_q_map, plot_q_map_modified, plot_value_map_others
+from src.utils import record_video, CsvLogger, plot_value_map, plot_q_map, plot_q_map_modified, plot_value_map_others, plot_decode_map
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
 from src import d4rl_utils, d4rl_ant, ant_diagnostics, viz_utils, keynode_utils
 from src.d4rl_utils import plot_obs
@@ -40,7 +40,7 @@ flags.DEFINE_string('algo_name', 'ask_hilp', '') # 'ask', 'ask_hilp'
 
 flags.DEFINE_integer('gpu', 0, '')
 flags.DEFINE_integer('seed', 0, '')
-flags.DEFINE_integer('batch_size', 1024, '')
+flags.DEFINE_integer('batch_size', 256, '')
 flags.DEFINE_integer('pretrain_steps', 500002, '')
 flags.DEFINE_integer('eval_interval', 100, '')
 flags.DEFINE_integer('save_interval', 100000, '')
@@ -419,6 +419,7 @@ def main(_):
     
     if 'guider' == FLAGS.algo_name:
         decode = agent.get_decode
+        prior = agent.get_prior
     
     # if FLAGS.use_rep == "hiql_goal_encoder":
     #     encoder_fn = jax.jit(jax.vmap(agent.get_value_goal))
@@ -524,7 +525,7 @@ def main(_):
         if load_file is None:
             
             # train_steps = int(2*10**5 + 1) if 'ant' in FLAGS.env_name else int(1*10**5 + 1)
-            pretrain_steps = int(5*10**5 + 1) if 'guider' in FLAGS.algo_name else pretrain_steps
+            pretrain_steps = int(2*10**5 + 1) if 'guider' in FLAGS.algo_name else pretrain_steps
             if 'guider' in FLAGS.algo_name:
                 update = dict(qf_update=False, actor_update=False, alpha_update=False, high_actor_update=False, high_qf_update=False, hilp_update=False, prior_update=True)
             else:
@@ -536,16 +537,19 @@ def main(_):
                         smoothing=0.1,
                         dynamic_ncols=True):
                 
-                pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size, **update)
+                pretrain_batch = pretrain_dataset.sample(int(FLAGS.batch_size/2), **update)
                 agent, update_info = supply_rng(agent.pretrain_update)(pretrain_batch, **update)
                 if i % FLAGS.log_interval == 0:
                     train_metrics = {f'training/{k}': v for k, v in update_info.items()}
                 
                     if i % (FLAGS.log_interval *10) == 0:
-                        pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
+                        # pretrain_batch = pretrain_dataset.sample(FLAGS.batch_size)
                         if 'ant' in FLAGS.env_name and 'networks_hilp_value' in agent.network.params.keys():
-                            value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
+                            value_map, identity_map = plot_value_map(agent, observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
                             train_metrics['value_map'] = wandb.Image(value_map)
+                        if 'ant' in FLAGS.env_name and 'networks_prior' in agent.network.params.keys():
+                            decode_map = plot_decode_map(agent, observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
+                            train_metrics['decode_map'] = wandb.Image(decode_map)
                         # else: 
                         # ant 외 환경에서 tsne 사용해서 value 그려볼것
                         #     value_map, identity_map = plot_value_map_others(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'])
@@ -653,6 +657,7 @@ def main(_):
                     FLAGS=FLAGS,
                     nodes=key_nodes,
                     decode=decode,
+                    **{'prior':prior}
                 )
             
             eval_metrics = {f'evaluation/{k}': v for k, v in eval_info.items()}
@@ -664,12 +669,12 @@ def main(_):
                 value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], transition_index)
                 eval_metrics['value_map'] = wandb.Image(value_map)
                 
-            elif 'ant' in FLAGS.env_name and 'cql' in FLAGS.algo_name:
-                if FLAGS.high_action_in_hilp:
-                    q_map = plot_q_map_modified(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
-                else:
-                    q_map = plot_q_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
-                eval_metrics['q_map'] = wandb.Image(q_map)
+            # elif 'ant' in FLAGS.env_name and ('cql' in FLAGS.algo_name or 'guider' in FLAGS.algo_name):
+            #     if FLAGS.high_action_in_hilp:
+            #         q_map = plot_q_map_modified(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
+            #     else:
+            #         q_map = plot_q_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
+            #     eval_metrics['q_map'] = wandb.Image(q_map)
                 
             # traj_metrics = get_traj_v(agent, example_trajectory)
             # value_viz = viz_utils.make_visual_no_image(

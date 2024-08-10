@@ -110,10 +110,10 @@ def make_env_get_dataset(FLAGS):
                 env.viewer.cam.distance = 6
                 env.viewer.cam.elevation = -60
                 
-            viz_env, viz_dataset = d4rl_ant.get_env_and_dataset(env_name)
-            viz = ant_diagnostics.Visualizer(env_name, viz_env, viz_dataset, discount=FLAGS.discount)
-            init_state = np.copy(viz_dataset['observations'][0])
-            init_state[:2] = (12.5, 8)
+            # viz_env, viz_dataset = d4rl_ant.get_env_and_dataset(env_name)
+            # viz = ant_diagnostics.Visualizer(env_name, viz_env, viz_dataset, discount=FLAGS.discount)
+            # init_state = np.copy(viz_dataset['observations'][0])
+            # init_state[:2] = (12.5, 8)
             
         elif 'ultra' in FLAGS.env_name:
             if 'topview' not in FLAGS.env_name:
@@ -296,7 +296,8 @@ def get_dataset(env: gym.Env,
                 else:
                     dones_float[i] = 0
             dones_float[-1] = 1
-            dataset['rewards'], goal_info = relabel_ant(env, env_name, dataset, flag) # flags.use_goal_info_On 일때만, goal_info 반환하고 나머지는 None
+            if 'ultra' in env_name:
+                dataset['rewards'], goal_info = relabel_ant(env, env_name, dataset, flag) # flags.use_goal_info_On 일때만, goal_info 반환하고 나머지는 None
         elif 'calvin' in env_name:
             goal_info, episode_index = relabel_calvin(env, env_name, dataset, flag)
             dones_float = dataset['terminals'].copy()
@@ -411,7 +412,7 @@ def get_embedding_obs(dataset, goal_info):
 def relabel_ant(env, env_name, dataset, flags):
     observation_pos = dataset['observations'].reshape(999,1000,-1)[:,:,:2]  
     new_rewards = np.zeros((999,1000))  
-    # goal_info = None
+    goal_info = None
     # if flags.use_goal_info_On:
     #     d4rl_dataset = env.get_dataset()
     #     goal_pos = d4rl_dataset['infos/goal']  

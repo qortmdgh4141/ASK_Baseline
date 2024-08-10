@@ -52,7 +52,7 @@ def kitchen_render(kitchen_env, wh=64):
 def evaluate_with_trajectories(
         policy_fn, high_policy_fn, env: gym.Env, env_name, num_episodes: int, base_observation=None, num_video_episodes=0,
         eval_temperature=0, epsilon=0, 
-        config=None, find_key_node = None, hilp_fn=None, FLAGS=None, distance_fn=None, nodes=None, decode=None
+        config=None, find_key_node = None, hilp_fn=None, FLAGS=None, distance_fn=None, nodes=None, decode=None, **kwargs
 ) -> Dict[str, float]:
     trajectories = []
     stats = defaultdict(list)
@@ -65,8 +65,9 @@ def evaluate_with_trajectories(
         # Set goal
         if 'antmaze' in env_name:
             goal = env.wrapped_env.target_goal
-            obs_goal = base_observation.copy()
-            obs_goal[:2] = goal
+            # obs_goal = base_observation.copy()
+            # obs_goal[:2] = goal
+            obs_goal = np.array(goal)
             node_dim = np.arange(2)
             interval, min_dist = FLAGS.way_steps, 4
         elif 'kitchen' in env_name:
@@ -103,14 +104,19 @@ def evaluate_with_trajectories(
                
             # if h_step == interval or dist < init_dist * 0.5:
             if h_step == interval or step==0:
-                cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=eval_temperature)
+                cur_obs_subgoal = high_policy_fn(observations=observation[:2], goals=obs_goal, temperature=eval_temperature)
                 if FLAGS.high_action_in_hilp or 'cql' in FLAGS.algo_name:
                     # cur_obs_goal = plot_subgoal = cur_obs_subgoal
                     
                     cur_obs_goal = plot_subgoal = jnp.concatenate([hilp_fn(observations=observation), cur_obs_subgoal], axis=-1)
                     
                 elif 'guider' in FLAGS.algo_name:
-                    cur_obs_goal = cur_obs_subgoal = plot_subgoal = decode(observations=observation, z=cur_obs_subgoal, deterministic=True)
+                    cur_obs_goal = plot_subgoal = decode(observations=observation[:2], z=cur_obs_subgoal, deterministic=True)
+                    prior_subgoal,_ = kwargs['prior'](observations=observation[:2])
+                    prior_subgoal = decode(observations=observation[:2], z=prior_subgoal, deterministic=True)
+                    
+                    print(f'{step=}, {observation[:2]=}, {cur_obs_goal[:2]=}, {prior_subgoal[:2]=}')
+                    
                 else:
                     cur_obs_goal = plot_subgoal = cur_obs_subgoal
                 if config['use_keynode_in_eval_On']:
