@@ -1261,15 +1261,12 @@ def plot_decode_map(agent, base_observation, goal_info, i, g_start_time, pretrai
     
     axes[0,0].set_title('decode state, real obs(b), prior(o), latent(g), subgoals(r)')
     
-    obs = [base_observation[:2]]
+    sc2 = axes[0,1].scatter(base_observation[0], base_observation[1])
     for i in range(4):
         base_mean, std = agent.get_prior(observations=base_observation[:2])
         recon_base = agent.get_decode(observations=base_observation[:2], z=base_mean)
-        obs.append(recon_base)
         base_observation = recon_base
-    obs = np.array(obs)
-    sc2 = axes[0,1].scatter(obs[:-1,0], obs[:-1,1])
-    sc2 = axes[0,1].scatter(obs[1:,0], obs[1:,1])
+        sc2 = axes[0,1].scatter(base_observation[0], base_observation[1])
 
     
     axes[0,1].set_xlim([-2,max_x])
