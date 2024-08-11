@@ -25,7 +25,7 @@ from functools import partial
 from src.gc_dataset import GCSDataset
 from src.agents import ask as learner
 from ml_collections import config_flags
-from src.utils import record_video, CsvLogger, plot_value_map, plot_q_map, plot_q_map_modified, plot_value_map_others, plot_decode_map
+from src.utils import record_video, CsvLogger, plot_value_map, plot_q_map, plot_q_map_modified, plot_value_map_others, plot_decode_map, plot_guider_q_map
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
 from src import d4rl_utils, d4rl_ant, ant_diagnostics, viz_utils, keynode_utils
 from src.d4rl_utils import plot_obs
@@ -525,7 +525,7 @@ def main(_):
         if load_file is None:
             
             # train_steps = int(2*10**5 + 1) if 'ant' in FLAGS.env_name else int(1*10**5 + 1)
-            pretrain_steps = int(2*10**5 + 1) if 'guider' in FLAGS.algo_name else pretrain_steps
+            pretrain_steps = int(2*10**3 + 1) if 'guider' in FLAGS.algo_name else pretrain_steps
             if 'guider' in FLAGS.algo_name:
                 update = dict(qf_update=False, actor_update=False, alpha_update=False, high_actor_update=False, high_qf_update=False, hilp_update=False, prior_update=True)
             else:
@@ -669,12 +669,14 @@ def main(_):
                 value_map, identity_map = plot_value_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], transition_index)
                 eval_metrics['value_map'] = wandb.Image(value_map)
                 
-            # elif 'ant' in FLAGS.env_name and ('cql' in FLAGS.algo_name or 'guider' in FLAGS.algo_name):
-            #     if FLAGS.high_action_in_hilp:
-            #         q_map = plot_q_map_modified(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
-            #     else:
-            #         q_map = plot_q_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
-            #     eval_metrics['q_map'] = wandb.Image(q_map)
+            elif 'ant' in FLAGS.env_name and ('cql' in FLAGS.algo_name or 'guider' in FLAGS.algo_name):
+                if FLAGS.high_action_in_hilp:
+                    q_map = plot_q_map_modified(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
+                elif 'guider' == FLAGS.algo_name:
+                    q_map = plot_guider_q_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
+                else:
+                    q_map = plot_q_map(agent, base_observation, obs_goal, i, g_start_time, pretrain_batch, dataset['observations'], trajs=trajs)
+                eval_metrics['q_map'] = wandb.Image(q_map)
                 
             # traj_metrics = get_traj_v(agent, example_trajectory)
             # value_viz = viz_utils.make_visual_no_image(

@@ -1023,6 +1023,14 @@ class JointTrainAgent(flax.struct.PyTreeNode):
     get_decode = jax.jit(get_decode, static_argnames=('deterministic'))
 
     @jax.jit
+    def get_latent(agent,
+                            *,
+                            observations: jnp.ndarray,
+                            targets: jnp.ndarray,
+                            seed: bool=False) -> jnp.ndarray:
+        return agent.network(observations=observations, targets=targets, seed=seed, method='latent')
+
+    @jax.jit
     def get_prior(agent,
                             *,
                             observations: jnp.ndarray) -> jnp.ndarray:
