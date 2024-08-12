@@ -1224,7 +1224,8 @@ def plot_q_map(agent, base_observation, goal_info, i, g_start_time, pretrain_bat
 
 def plot_guider_q_map(agent, base_observation, goal_info, i, g_start_time, pretrain_batch, transition_index=None, trajs=None):
     goal_info = goal_info[:2]
-    observations = base_observation[:2]
+    # observations = base_observation[:2]
+    observations = np.array([20,20])
     if trajs is not None:
         subgoals = []
         obs = []
