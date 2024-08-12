@@ -12,7 +12,7 @@ current_time=$(date "+%m-%d_%H:%M")
 project="G-ant-ultra"
 
 # extra_name="G_large"
-extra_name="G_kl_1_B256"
+extra_name="G_kl_1_B256_g5_G_sample"
 
 gpu="2"
 start=0

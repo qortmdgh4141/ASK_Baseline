@@ -525,7 +525,7 @@ def main(_):
         if load_file is None:
             
             # train_steps = int(2*10**5 + 1) if 'ant' in FLAGS.env_name else int(1*10**5 + 1)
-            pretrain_steps = int(2*10**5 + 1) if 'guider' in FLAGS.algo_name else pretrain_steps
+            pretrain_steps = int(1*10**5 + 1) if 'guider' in FLAGS.algo_name else pretrain_steps
             if 'guider' in FLAGS.algo_name:
                 update = dict(qf_update=False, actor_update=False, alpha_update=False, high_actor_update=False, high_qf_update=False, hilp_update=False, prior_update=True)
             else:
