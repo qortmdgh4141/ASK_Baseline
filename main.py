@@ -58,11 +58,11 @@ flags.DEFINE_integer('qf_hidden_dim', 512, '')
 flags.DEFINE_integer('qf_num_layers', 3, '')
 flags.DEFINE_integer('geom_sample', 1, '')
 
-flags.DEFINE_float('p_randomgoal', 0.1, '') # 0.3
-flags.DEFINE_float('p_trajgoal', 0.5, '')
-flags.DEFINE_float('p_currgoal', 0.4, '') # 0.2
-flags.DEFINE_float('high_p_randomgoal', 0.0, '') # 0.6
-flags.DEFINE_float('high_p_relable', 0.8, '')
+flags.DEFINE_float('p_randomgoal', 0.2, '') # 0.3
+flags.DEFINE_float('p_trajgoal', 0.6, '')
+flags.DEFINE_float('p_currgoal', 0.2, '') # 0.2
+flags.DEFINE_float('high_p_randomgoal', 0.2, '') # 0.6
+flags.DEFINE_float('high_p_relabel', 0.8, '')
 flags.DEFINE_float('high_temperature', 1, '')
 flags.DEFINE_float('pretrain_expectile', 0.7, '')
 flags.DEFINE_float('temperature', 1, '')
@@ -74,7 +74,7 @@ flags.DEFINE_integer('expert_data_On', 0, '') # 현재 kitchen (reward >= 3), ca
 flags.DEFINE_string('use_rep', '', '') # ["hiql_goal_encoder", "hilp_subgoal_encoder", "hilp_encoder", "vae_encoder"]
 flags.DEFINE_integer('rep_normalizing_On', 1, '') # 0: rep_norm 제거 // 1: rep_norm 사용
 flags.DEFINE_integer('rep_dim', 10, '')
-flags.DEFINE_integer('latent_dim', 10, '')
+flags.DEFINE_integer('latent_dim', 2, '')
 
 flags.DEFINE_string('build_keynode_time', "during_training", '') # ["pre_training", "during_training", "post_training"]
 flags.DEFINE_integer('keynode_num', 2, '')
@@ -90,7 +90,7 @@ flags.DEFINE_string('mapping_method', 'nearest', '') # nearest, triple, center
 
 flags.DEFINE_integer('hilp_skill_dim', 32, '')
 flags.DEFINE_integer('hilp_decoder', 1, '')
-flags.DEFINE_integer('cql_high_target_action_gap', 32, '')
+flags.DEFINE_integer('cql_high_target_action_gap', 5, '')
 flags.DEFINE_integer('bilinear', 0, '')
 
 flags.DEFINE_integer('vae_encoder_dim', 10, '')
@@ -225,7 +225,7 @@ def main(_):
     FLAGS.gcdataset['p_trajgoal'] = FLAGS.p_trajgoal
     FLAGS.gcdataset['p_currgoal'] = FLAGS.p_currgoal
     FLAGS.gcdataset['high_p_randomgoal'] = FLAGS.high_p_randomgoal
-    FLAGS.gcdataset['high_p_relable'] = FLAGS.high_p_relable
+    FLAGS.gcdataset['high_p_relabel'] = FLAGS.high_p_relabel
     FLAGS.gcdataset['geom_sample'] = FLAGS.geom_sample
     FLAGS.gcdataset['discount'] = FLAGS.discount
     FLAGS.gcdataset['way_steps'] = FLAGS.way_steps
@@ -525,7 +525,7 @@ def main(_):
         if load_file is None:
             
             # train_steps = int(2*10**5 + 1) if 'ant' in FLAGS.env_name else int(1*10**5 + 1)
-            pretrain_steps = int(2*10**3 + 1) if 'guider' in FLAGS.algo_name else pretrain_steps
+            pretrain_steps = int(2*10**5 + 1) if 'guider' in FLAGS.algo_name else pretrain_steps
             if 'guider' in FLAGS.algo_name:
                 update = dict(qf_update=False, actor_update=False, alpha_update=False, high_actor_update=False, high_qf_update=False, hilp_update=False, prior_update=True)
             else:

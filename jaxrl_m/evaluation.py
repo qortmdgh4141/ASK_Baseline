@@ -115,7 +115,7 @@ def evaluate_with_trajectories(
                     prior_subgoal,_ = kwargs['prior'](observations=observation[:2])
                     prior_subgoal = decode(observations=observation[:2], z=prior_subgoal, deterministic=True)
                     
-                    print(f'{step=}, {observation[:2]=}, {cur_obs_goal[:2]=}, {prior_subgoal[:2]=}')
+                    # print(f'{step=}, {observation[:2]=}, {cur_obs_goal[:2]=}, {prior_subgoal[:2]=}')
                     
                 else:
                     cur_obs_goal = plot_subgoal = cur_obs_subgoal

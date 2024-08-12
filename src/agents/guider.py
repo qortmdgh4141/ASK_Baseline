@@ -1089,7 +1089,7 @@ def create_learner(
         alpha_multiplier = 1,
         cql_low_target_action_gap = 1,
         cql_high_target_action_gap = 5,
-        high_target_divergence = 2,  
+        high_target_divergence = 1,  
         beta = 0.1,
         kl_balance=0.8,      
         **kwargs):

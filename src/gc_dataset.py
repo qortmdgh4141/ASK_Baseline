@@ -91,7 +91,7 @@ class GCSDataset(GCDataset):
     way_steps: int = None
     high_p_randomgoal: float = 0.
     keynode_ratio: float = 0.5
-    high_p_relable : float = 0.
+    high_p_relabel : float = 0.
     final_goal : int = 0
     high_action_in_hilp : int = 0
     
@@ -115,9 +115,9 @@ class GCSDataset(GCDataset):
         # goal for value function training
         goal_indx = self.sample_goals(indx)
         
-        if kwargs.get('prior_update') == False:
-            relable = (np.random.rand(batch_size) < self.high_p_relable)
-            goal_indx = np.where(relable, indx, goal_indx)
+        # if kwargs.get('prior_update') == False:
+        #     relable = (np.random.rand(batch_size) < self.high_p_relabel)
+        #     goal_indx = np.where(relable, indx, goal_indx)
             
         success = (indx == goal_indx)
         batch['rewards'] = success.astype(float) * self.reward_scale + self.reward_shift
@@ -128,15 +128,23 @@ class GCSDataset(GCDataset):
             batch['masks'] = np.ones(batch_size)
 
 
-        batch['goals'] = jax.tree_map(lambda arr: arr[goal_indx], self.dataset['observations'])
 
         # final state in each trajectory
         final_state_indx = self.terminal_locs[np.searchsorted(self.terminal_locs, indx)]
+        # goal inx to be final state or relabel achieved goal
+        if kwargs.get('prior_update') == False:
+            relabel = (np.random.rand(batch_size) < self.high_p_relabel)
+            # goal_indx = np.where(relable, goal_indx, final_state_indx)
+            achieved_goals = jax.tree_map(lambda arr: arr[goal_indx,:2], self.dataset['observations'])
+            goals = jax.tree_map(lambda arr: arr[goal_indx,:2], self.dataset['goal_info'])
+            batch['goals'] = jnp.where(relabel[:,jnp.newaxis], achieved_goals, goals)
+        
         # subgoal sampled from its own trajectory for low level training
         way_indx = np.minimum(indx + self.way_steps, final_state_indx)
         batch['low_goals'] = jax.tree_map(lambda arr: arr[way_indx,:2], self.dataset['observations'])
         if self.final_goal:
-            batch['final_goals'] = jax.tree_map(lambda arr: arr[final_state_indx,:2], self.dataset['observations'])
+            # batch['final_goals'] = jax.tree_map(lambda arr: arr[final_state_indx,:2], self.dataset['observations'])
+            batch['final_goals'] = jax.tree_map(lambda arr: arr[indx,:2], self.dataset['goal_info'])
         
         if kwargs.get('high_actor_update') == True:
             batch['high_observations'] = jax.tree_map(lambda arr: arr[:,:2], batch['observations'])
@@ -144,15 +152,18 @@ class GCSDataset(GCDataset):
             # subgoal sampled from its own trajectory with distance ratio for high level training
             distance = np.random.rand(batch_size)
             high_traj_goal_indx = np.round((np.minimum(indx + 1, final_state_indx) * distance + final_state_indx * (1 - distance))).astype(int)
+           
             # subgoal sampled from its own trajectory for high level training 
             high_traj_target_indx = np.minimum(indx + self.way_steps, high_traj_goal_indx)
+           
             # randaom goal sampled from 
             high_random_goal_indx = np.random.randint(self.dataset.size, size=batch_size)
-            high_random_target_indx = np.minimum(indx + self.way_steps, final_state_indx)
+            # high_random_target_indx = np.minimum(indx + self.way_steps, final_state_indx)
 
-            pick_random = (np.random.rand(batch_size) < self.high_p_randomgoal)
-            high_goal_idx = np.where(pick_random, high_random_goal_indx, high_traj_goal_indx)
-            high_target_idx = np.where(pick_random, high_random_target_indx, high_traj_target_indx)
+            pick_random_goal = (np.random.rand(batch_size) < self.high_p_randomgoal)
+            high_goal_idx = np.where(pick_random_goal, high_random_goal_indx, high_traj_goal_indx)
+            # high_target_idx = np.where(pick_random, high_random_target_indx, high_traj_target_indx)
+            high_target_idx = high_traj_target_indx
             
             batch['high_goals'] = jax.tree_map(lambda arr: arr[high_goal_idx,:2], self.dataset['observations'])
             
@@ -162,8 +173,8 @@ class GCSDataset(GCDataset):
             # high_success = (high_target_idx == high_goal_idx)
             
             # additional relable for high level
-            relable = (np.random.rand(batch_size) < self.high_p_relable)
-            high_goal_idx = np.where(relable, high_traj_target_indx, high_random_target_indx)
+            # relable = (np.random.rand(batch_size) < self.high_p_relabel)
+            # high_goal_idx = np.where(relable, high_traj_target_indx, high_random_target_indx)
             
             high_success = (high_target_idx == high_goal_idx)
             
@@ -200,7 +211,7 @@ class GCSDataset(GCDataset):
 
             
         
-        if isinstance(batch['goals'], FrozenDict):
+        if isinstance(batch['rewards'], FrozenDict):
             # Freeze the other observations
             batch['observations'] = freeze(batch['observations'])
             batch['next_observations'] = freeze(batch['next_observations'])
