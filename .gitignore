@@ -163,3 +163,10 @@ experiment_output/
 ipynbs/
 .DS_Store
 /graph_img/
+plot_ant/
+value_img/
+q value_img/
+value_map/
+plot_ant/
+data/
+decode/
