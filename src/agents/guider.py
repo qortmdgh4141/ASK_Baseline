@@ -27,7 +27,7 @@ def expectile_loss(adv, diff, expectile=0.7):
 
 def compute_kl(post_mean, post_std, prior_mean, prior_std=1):
     kl = jnp.log(prior_std) - jnp.log(post_std) + 0.5 * ((post_std**2 + (post_mean - prior_mean)**2) / prior_std**2 - 1)
-    return jnp.mean(kl)
+    return jnp.mean(kl, axis=-1)
 
 def compute_actor_loss(agent, batch, network_params):
     # sac policy loss
@@ -129,7 +129,7 @@ def compute_high_actor_loss(agent, batch, network_params):
     # q = jnp.minimum(q1, q2)
     
     alpha = jnp.exp(agent.network(method='high_log_alpha')) * agent.config['alpha_multiplier'] 
-    alpha = jnp.clip(alpha, 0, 1e6)
+    alpha = jax.lax.stop_gradient(jnp.clip(alpha, 0, 1e6))
     
     # actor_loss = (-q + alpha*log_pi).mean()
     
@@ -147,6 +147,7 @@ def compute_high_actor_loss(agent, batch, network_params):
     
     # cur q    
     dist = agent.network(batch['high_observations'], batch['high_goals'], state_rep_grad=True, goal_rep_grad=False, method='high_actor', params=network_params)
+    # dist = agent.network(batch['high_observations'], batch['high_goals'], state_rep_grad=True, goal_rep_grad=False, method='high_actor')
     new_actions, log_pi = supply_rng(dist.sample_and_log_prob)()
     
     v1, v2 = agent.network(batch['high_observations'], new_actions, batch['high_goals'], method='high_qf')
@@ -174,7 +175,7 @@ def compute_high_actor_loss(agent, batch, network_params):
     prior_mean, prior_std = agent.network(batch['high_observations'], method='prior')
 
     # kl loss
-    kl_loss = compute_kl(dist.loc, dist.scale_diag, prior_mean, prior_std)
+    kl_loss = compute_kl(dist.loc, dist.scale_diag, jax.lax.stop_gradient(prior_mean), jax.lax.stop_gradient(prior_std))
     actor_loss = (-v + alpha*kl_loss).mean()
     
     batch['high_kl_loss'] = kl_loss
@@ -224,13 +225,14 @@ def compute_qf_loss(agent, batch, network_params):
     if agent.config['final_goal']:
         next_dist = agent.network(batch['next_observations'], subgoals, batch['goals'], state_rep_grad=True, goal_rep_grad=False, method='actor')
         next_actions, next_log_pi = supply_rng(next_dist.sample_and_log_prob)(sample_shape=10)
+        next_actions = jax.lax.stop_gradient(next_actions)
         
         (next_q1, next_q2) = agent.network(jnp.tile(batch['next_observations'], (10,1,1)), next_actions, jnp.tile(subgoals, (10,1,1)), jnp.tile(batch['goals'], (10,1,1)), method='target_qf')
         next_q_ = jnp.minimum(next_q1, next_q2)
         
         max_q_index = jnp.argmax(next_q_, axis=0)
         next_q_max = jnp.take_along_axis(next_q_.transpose(1,0), jnp.expand_dims(max_q_index, axis=-1), axis=-1) 
-        next_log_pi_max = jnp.take_along_axis(next_log_pi.transpose(1,0), jnp.expand_dims(max_q_index, axis=-1), axis=-1) 
+        # next_log_pi_max = jnp.take_along_axis(next_log_pi.transpose(1,0), jnp.expand_dims(max_q_index, axis=-1), axis=-1) 
         
         # entropy 
         # log_alpha = agent.network(method='log_alpha')
@@ -386,7 +388,8 @@ def compute_high_qf_loss(agent, batch, network_params):
 
     # pred q
     _, z, _ = agent.network(batch['high_observations'], batch['high_targets'], method='latent')
-
+    z = jax.lax.stop_gradient(z)
+    
     if agent.config['high_action_in_hilp']:
         # subgoals = (batch['rep_low_goals'] - batch['rep_observations']) / jnp.linalg.norm(batch['rep_low_goals'] - batch['rep_observations'], axis=-1, keepdims=True)
         rep_high_targets = batch['rep_high_targets']
@@ -448,23 +451,24 @@ def compute_high_qf_loss(agent, batch, network_params):
     
     # high alpha prime
     log_high_alpha_prime = agent.network(method='high_log_alpha_prime')
-    high_alpha_prime = jnp.clip(jnp.exp(log_high_alpha_prime), 0.0, 1e6)
+    high_alpha_prime = jax.lax.stop_gradient(jnp.clip(jnp.exp(log_high_alpha_prime), 0.0, 1e6))
     
     # high_alpha_prime = jax.lax.stop_gradient(high_alpha_prime)
     
-    cql_min_qf1_loss = high_alpha_prime * (cql_qf1_diff - agent.config['cql_high_target_action_gap'])
-    cql_min_qf2_loss = high_alpha_prime * (cql_qf2_diff - agent.config['cql_high_target_action_gap'])
+    cql_min_qf1_loss = high_alpha_prime * cql_qf1_diff
+    cql_min_qf2_loss = high_alpha_prime * cql_qf2_diff
                     
     qf1_loss = q_loss1 + cql_min_qf1_loss
     qf2_loss = q_loss2 + cql_min_qf2_loss
     
-    high_alpha_prime_loss = (-cql_min_qf1_loss - cql_min_qf2_loss) * 0.5
+    # high_alpha_prime_loss = (-cql_min_qf1_loss - cql_min_qf2_loss) * 0.5
     
-    q_loss = qf1_loss + qf2_loss + high_alpha_prime_loss
+    # q_loss = qf1_loss + qf2_loss + high_alpha_prime_loss
+    q_loss = qf1_loss + qf2_loss 
     
     # for alpha prime update
-    batch['cql_qf1_diff'] = cql_qf1_diff - agent.config['cql_high_target_action_gap']
-    batch['cql_qf2_diff'] = cql_qf2_diff - agent.config['cql_high_target_action_gap']
+    batch['cql_qf1_diff'] = cql_qf1_diff
+    batch['cql_qf2_diff'] = cql_qf2_diff
     
     
     # q_loss = q_loss1 + q_loss2 
@@ -484,7 +488,7 @@ def compute_high_qf_loss(agent, batch, network_params):
         'q cql_q_current_actions': cql_q1_current_actions.mean(),
         'q cql_q_next_actions': cql_q1_next_actions.mean(),
         'high_alpha_prime': high_alpha_prime,
-        'high_alpha_prime_loss' : high_alpha_prime_loss
+        # 'high_alpha_prime_loss' : high_alpha_prime_loss
     }
     
 def compute_low_alpha_loss(agent, batch, network_params):
@@ -539,16 +543,14 @@ def compute_low_alpha_prime_loss(agent, batch, network_params):
     }
 
 def compute_high_alpha_prime_loss(agent, batch, network_params):
-    cql_qf1_diff = jax.lax.stop_gradient(batch['cql_qf1_diff'])
-    cql_qf2_diff = jax.lax.stop_gradient(batch['cql_qf2_diff'])
+    cql_qf1_diff = jax.lax.stop_gradient(batch['cql_qf1_diff'] - agent.config['cql_high_target_action_gap'])
+    cql_qf2_diff = jax.lax.stop_gradient(batch['cql_qf2_diff'] - agent.config['cql_high_target_action_gap'])
     
     # high alpha prime
     log_high_alpha_prime = agent.network(method='high_log_alpha_prime', params=network_params)
     alpha = jnp.clip(jnp.exp(log_high_alpha_prime), 0, 1e6)
-    cql_min_qf1_loss = alpha * cql_qf1_diff
-    cql_min_qf2_loss = alpha * cql_qf2_diff
     
-    high_alpha_prime_loss =  (-cql_min_qf1_loss - cql_min_qf2_loss)*0.5
+    high_alpha_prime_loss = -alpha * (cql_qf1_diff + cql_qf2_diff) * 0.5
     
     return high_alpha_prime_loss , {
         'high_alpha_prime' : jnp.exp(log_high_alpha_prime)
@@ -762,8 +764,8 @@ def compute_prior_loss(agent, batch, network_params):
     recon_loss = jnp.square(recon - low_goals).mean()
     
     # kl loss
-    regul_loss = compute_kl(z_mean, z_std, jax.lax.stop_gradient(prior_mean), jax.lax.stop_gradient(prior_std))
-    prior_loss_ = compute_kl(jax.lax.stop_gradient(z_mean), jax.lax.stop_gradient(z_std), prior_mean, prior_std)
+    regul_loss = compute_kl(z_mean, z_std, jax.lax.stop_gradient(prior_mean), jax.lax.stop_gradient(prior_std)).mean()
+    prior_loss_ = compute_kl(jax.lax.stop_gradient(z_mean), jax.lax.stop_gradient(z_std), prior_mean, prior_std).mean()
     
     elbo_loss = recon_loss + agent.config['beta'] * (1 - agent.config['kl_balance']) * regul_loss
     prior_loss = agent.config['beta'] * agent.config['kl_balance'] * prior_loss_
@@ -824,23 +826,24 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             else:
                 high_qf_loss = 0.
                 
-            # Actor
-            if actor_update:
-                actor_loss, actor_info = compute_actor_loss(agent, pretrain_batch, network_params)
-                for k, v in actor_info.items():
-                    info[f'actor/{k}'] = v
-            else:
-                actor_loss = 0.
+            # # Actor
+            # if actor_update:
+            #     actor_loss, actor_info = compute_actor_loss(agent, pretrain_batch, network_params)
+            #     for k, v in actor_info.items():
+            #         info[f'actor/{k}'] = v
+            # else:
+            #     actor_loss = 0.
 
-            # High Actor
-            if high_actor_update:
-                high_actor_loss, high_actor_info = compute_high_actor_loss(agent, pretrain_batch, network_params)
-                for k, v in high_actor_info.items():
-                    info[f'high_actor/{k}'] = v
-            else:
-                high_actor_loss = 0.
+            # # High Actor
+            # if high_actor_update:
+            #     high_actor_loss, high_actor_info = compute_high_actor_loss(agent, pretrain_batch, network_params)
+            #     for k, v in high_actor_info.items():
+            #         info[f'high_actor/{k}'] = v
+            # else:
+            #     high_actor_loss = 0.
 
-            loss = qf_loss + high_qf_loss + actor_loss + high_actor_loss + hilp_value_loss + prior_loss
+            # loss = qf_loss + high_qf_loss + actor_loss + high_actor_loss + hilp_value_loss + prior_loss
+            loss = qf_loss + high_qf_loss + hilp_value_loss + prior_loss
 
             return loss, info
 
@@ -854,15 +857,7 @@ class JointTrainAgent(flax.struct.PyTreeNode):
 
         #     return low_alpha_loss, info
 
-        def high_alpha_loss_fn(network_params):
-            info = {}
-               
-            # alpha function
-            high_alpha_loss, alpha_info = compute_high_alpha_loss(agent, pretrain_batch, network_params)
-            for k, v in alpha_info.items():
-                info[f'alpha/{k}'] = v
 
-            return high_alpha_loss, info
 
         # def low_alpha_prime_loss_fn(network_params):
         #     info = {}
@@ -884,6 +879,38 @@ class JointTrainAgent(flax.struct.PyTreeNode):
 
             return high_alpha_prime_loss, info
         
+        
+        def compute_actor_loss_fn(network_params):
+            info = {}
+               
+            # alpha function
+            actor_loss, actor_info = compute_actor_loss(agent, pretrain_batch, network_params)
+            for k, v in actor_info.items():
+                info[f'actor/{k}'] = v
+
+            return actor_loss, info
+
+        def compute_high_actor_loss_fn(network_params):
+            info = {}
+               
+            # alpha function
+            high_actor_loss, high_actor_info = compute_high_actor_loss(agent, pretrain_batch, network_params)
+            for k, v in high_actor_info.items():
+                info[f'high_actor/{k}'] = v
+
+            return high_actor_loss, info
+        
+        def high_alpha_loss_fn(network_params):
+            info = {}
+               
+            # alpha function
+            high_alpha_loss, alpha_info = compute_high_alpha_loss(agent, pretrain_batch, network_params)
+            for k, v in alpha_info.items():
+                info[f'alpha/{k}'] = v
+
+            return high_alpha_loss, info
+        
+        
         # if qf_update:
         #     new_target_params = jax.tree_map(
         #         lambda p, tp: p * agent.config['target_update_rate'] + tp * (1 - agent.config['target_update_rate']), agent.network.params['networks_qf'], agent.network.params['networks_target_qf']
@@ -895,9 +922,12 @@ class JointTrainAgent(flax.struct.PyTreeNode):
         # Q fn, policy update
         new_network, info = agent.network.apply_loss_fn(loss_fn=loss_fn, has_aux=True)
         # agent = agent.replace(network=new_network)
-        
         new_params = unfreeze(new_network.params)
+        new_params['networks_high_actor'] = agent.network.params['networks_high_actor']
+        new_params['networks_actor'] = agent.network.params['networks_actor']
+        new_network = new_network.replace(params=freeze(new_params))
         
+        new_agent = agent.replace(network=new_network)
         # HILP update
         if hilp_update:
             hilp_new_target_params = jax.tree_map(
@@ -937,15 +967,31 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             # info.update(low_alpha_info)
             # new_params['networks_log_alpha'] = network.params['networks_log_alpha']
             
+
+            
+        # Actor
+        if actor_update:
+            network, actor_info = new_agent.network.apply_loss_fn(loss_fn=compute_actor_loss_fn, has_aux=True)
+            info.update(actor_info)
+            new_params['networks_actor'] = network.params['networks_actor']
+            
+
+        # High Actor
+        if high_actor_update:
+            network, high_actor_info = new_agent.network.apply_loss_fn(loss_fn=compute_high_actor_loss_fn, has_aux=True)
+            info.update(high_actor_info)
+            new_params['networks_high_actor'] = network.params['networks_high_actor']
+            
             # high alpha update
-            network, high_alpha_info = agent.network.apply_loss_fn(loss_fn=high_alpha_loss_fn, has_aux=True)
+            network, high_alpha_info = new_agent.network.apply_loss_fn(loss_fn=high_alpha_loss_fn, has_aux=True)
             info.update(high_alpha_info)
             new_params['networks_high_log_alpha'] = network.params['networks_high_log_alpha']
             
-            # pass
+            
+            
         new_network = new_network.replace(params=freeze(new_params))
         
-        return agent.replace(network=new_network, rng=jax.random.split(agent.rng, 1)[0]), info
+        return new_agent.replace(network=new_network, rng=jax.random.split(new_agent.rng, 1)[0]), info
         # return agent.replace(network=new_network, rng=jax.random.split(agent.rng, 1)[0]), info
     pretrain_update = jax.jit(pretrain_update, static_argnames=('qf_update', 'actor_update', 'alpha_update', 'high_qf_update', 'high_actor_update', 'hilp_update', 'prior_update'))
 

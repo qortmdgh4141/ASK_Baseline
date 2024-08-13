@@ -12,7 +12,7 @@ current_time=$(date "+%m-%d_%H:%M")
 project="G-ant-ultra"
 
 # extra_name="G_large"
-extra_name="G_kl_1_B256_g20_G_sample"
+extra_name="G_kl_1_B256_g5_G_sample"
 
 gpu="1"
 start=0
@@ -33,7 +33,7 @@ pretrain_expectile=0.95
 distance='first'
 key_node_q=0
 key_node_train=0
-cql_high_target_action_gap=20
+cql_high_target_action_gap=5
 bilinear=0
 hilp_decoder=0
 

@@ -967,7 +967,8 @@ def get_reward(next_state, goal, env_name):
     #         element_idx = OBS_ELEMENT_INDICES[element] - offset
     #         reward += calc_distance(next_state[:, element_idx], goal[:, element_idx]) < epsilon
     # else:
-    reward = 1. * (calc_distance(next_state, goal) < epsilon) - 1.        
+    reward = 1. * (calc_distance(next_state, goal) < epsilon)       
+    # reward = 1. * (calc_distance(next_state, goal) < epsilon) - 1.        
 
     # return reward.unsqueeze(dim=1)
     return reward
