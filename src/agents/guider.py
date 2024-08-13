@@ -517,7 +517,7 @@ def compute_high_alpha_loss(agent, batch, network_params):
     
     # kl loss alpha
     high_alpha = jnp.clip(jnp.exp(agent.network(method='high_log_alpha', params=network_params)), 0, 1e6)
-    high_alpha_loss = high_alpha * (jax.lax.stop_gradient(agent.config['high_target_divergence'] - batch['high_kl_loss'])).mean()
+    high_alpha_loss = (high_alpha * jax.lax.stop_gradient(agent.config['high_target_divergence'] - batch['high_kl_loss'])).mean()
     
     
     return high_alpha_loss, {

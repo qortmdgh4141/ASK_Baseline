@@ -296,8 +296,8 @@ def get_dataset(env: gym.Env,
                 else:
                     dones_float[i] = 0
             dones_float[-1] = 1
-            if 'ultra' in env_name:
-                dataset['rewards'], goal_info = relabel_ant(env, env_name, dataset, flag) # flags.use_goal_info_On 일때만, goal_info 반환하고 나머지는 None
+            # if 'ultra' in env_name:
+            dataset['rewards'], goal_info = relabel_ant(env, env_name, dataset, flag) # flags.use_goal_info_On 일때만, goal_info 반환하고 나머지는 None
         elif 'calvin' in env_name:
             goal_info, episode_index = relabel_calvin(env, env_name, dataset, flag)
             dones_float = dataset['terminals'].copy()
@@ -422,6 +422,14 @@ def relabel_ant(env, env_name, dataset, flags):
     #     goal_info = goal_pos.reshape(999*1000, 2)
     if 'ultra' in env_name:
         # unique_goal_pos = np.array([[12,0], [40,0], [52,0], [0,16], [0,28], [32,36], [52,0], [52,16], [52,36]])
+        last_obs = observation_pos[:,-1,:2]
+        for idx, obs_pos in enumerate(observation_pos.transpose(1,0,2)):
+            distance = np.linalg.norm(last_obs - obs_pos, axis=1)
+            index = np.where(distance <= 2.5, True, False)
+            new_rewards[index, idx] = 1.0
+        reshaped_obs = dataset['observations'].reshape(999,1000,-1)
+        goal_info = np.repeat(reshaped_obs[:,-1], repeats=1000, axis=0)
+    elif 'large' in env_name:
         last_obs = observation_pos[:,-1,:2]
         for idx, obs_pos in enumerate(observation_pos.transpose(1,0,2)):
             distance = np.linalg.norm(last_obs - obs_pos, axis=1)

@@ -1388,7 +1388,7 @@ def plot_decode_map(agent, base_observation, goal_info, i, g_start_time, pretrai
     import os
     
     dir_name = os.path.dirname(os.path.dirname(__file__))
-    save_path = os.path.join(dir_name, 'decode ', g_start_time)
+    save_path = os.path.join(dir_name, 'decode', g_start_time)
     os.makedirs(save_path, exist_ok=True)
     plt.savefig(os.path.join(save_path, f'sampled_obs_img_{i}.png'), format="PNG", dpi=300)
     # plt.close()
