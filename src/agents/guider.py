@@ -922,10 +922,13 @@ class JointTrainAgent(flax.struct.PyTreeNode):
         # Q fn, policy update
         new_network, info = agent.network.apply_loss_fn(loss_fn=loss_fn, has_aux=True)
         # agent = agent.replace(network=new_network)
-        new_params = unfreeze(new_network.params)
-        new_params['networks_high_actor'] = agent.network.params['networks_high_actor']
-        new_params['networks_actor'] = agent.network.params['networks_actor']
-        new_network = new_network.replace(params=freeze(new_params))
+        new_params = unfreeze(agent.network.params)
+        new_params['networks_qf'] = new_network.params['networks_qf']
+        new_params['networks_high_qf'] = new_network.params['networks_high_qf']
+        new_params['networks_prior'] = new_network.params['networks_prior']
+        new_params['networks_decode'] = new_network.params['networks_decode']
+        new_params['networks_latent'] = new_network.params['networks_latent']
+        new_network = agent.network.replace(params=freeze(new_params))
         
         new_agent = agent.replace(network=new_network)
         # HILP update
@@ -971,19 +974,19 @@ class JointTrainAgent(flax.struct.PyTreeNode):
             
         # Actor
         if actor_update:
-            network, actor_info = new_agent.network.apply_loss_fn(loss_fn=compute_actor_loss_fn, has_aux=True)
+            network, actor_info = agent.network.apply_loss_fn(loss_fn=compute_actor_loss_fn, has_aux=True)
             info.update(actor_info)
             new_params['networks_actor'] = network.params['networks_actor']
             
 
         # High Actor
         if high_actor_update:
-            network, high_actor_info = new_agent.network.apply_loss_fn(loss_fn=compute_high_actor_loss_fn, has_aux=True)
+            network, high_actor_info = agent.network.apply_loss_fn(loss_fn=compute_high_actor_loss_fn, has_aux=True)
             info.update(high_actor_info)
             new_params['networks_high_actor'] = network.params['networks_high_actor']
             
             # high alpha update
-            network, high_alpha_info = new_agent.network.apply_loss_fn(loss_fn=high_alpha_loss_fn, has_aux=True)
+            network, high_alpha_info = agent.network.apply_loss_fn(loss_fn=high_alpha_loss_fn, has_aux=True)
             info.update(high_alpha_info)
             new_params['networks_high_log_alpha'] = network.params['networks_high_log_alpha']
             
