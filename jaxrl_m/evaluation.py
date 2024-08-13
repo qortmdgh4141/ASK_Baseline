@@ -114,11 +114,10 @@ def evaluate_with_trajectories(
                     cur_obs_goal = plot_subgoal = decode(observations=observation[:2], z=cur_obs_subgoal, deterministic=True)
                     prior_subgoal,_ = kwargs['prior'](observations=observation[:2])
                     prior_subgoal = decode(observations=observation[:2], z=prior_subgoal, deterministic=True)
-                    
                     # print(f'{step=}, {observation[:2]=}, {cur_obs_goal[:2]=}, {prior_subgoal[:2]=}')
-                    
                 else:
                     cur_obs_goal = plot_subgoal = cur_obs_subgoal
+                    
                 if config['use_keynode_in_eval_On']:
                     # cur_obs_subgoal = high_policy_fn(observations=observation, goals=obs_goal, temperature=0, num_samples=1)
                     if FLAGS.high_action_in_hilp:

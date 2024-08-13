@@ -58,8 +58,8 @@ def compute_actor_loss(agent, batch, network_params):
         
         next_q1, next_q2 = agent.network(batch['next_observations'], next_new_actions, subgoals, batch['goals'], method='qf')
         next_q = jnp.minimum(next_q1, next_q2)
-        # q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
-        q = batch['rewards'] + agent.config['discount'] * next_q
+        q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
+        # q = batch['rewards'] + agent.config['discount'] * next_q
         
         # cur q    
         dist = agent.network(batch['observations'], subgoals, batch['goals'],state_rep_grad=True, goal_rep_grad=False, method='actor', params=network_params)
@@ -242,8 +242,8 @@ def compute_qf_loss(agent, batch, network_params):
         # no entropy
         next_q = next_q_max
         
-        # target_q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
-        target_q = batch['rewards'] + agent.config['discount'] * next_q
+        target_q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
+        # target_q = batch['rewards'] + agent.config['discount'] * next_q
         target_q = jax.lax.stop_gradient(target_q)
 
         (q1, q2) = agent.network(batch['observations'], batch['actions'], subgoals, batch['goals'], method='qf', params=network_params)
@@ -267,8 +267,8 @@ def compute_qf_loss(agent, batch, network_params):
         # no entropy
         next_q = next_q_max
         
-        # target_q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
-        target_q = batch['rewards'] + agent.config['discount'] * next_q
+        target_q = batch['rewards'] + agent.config['discount'] * batch['masks'] * next_q
+        # target_q = batch['rewards'] + agent.config['discount'] * next_q
         target_q = jax.lax.stop_gradient(target_q)
 
         (q1, q2) = agent.network(batch['observations'], batch['actions'], subgoals, method='qf', params=network_params)
@@ -382,8 +382,8 @@ def compute_high_qf_loss(agent, batch, network_params):
     # no entropy
     next_q = next_q_max
     
-    target_q = batch['high_rewards'] + agent.config['discount'] * next_q
-    # target_q = batch['high_rewards'] + agent.config['discount'] * batch['high_masks'] * next_q
+    # target_q = batch['high_rewards'] + agent.config['discount'] * next_q
+    target_q = batch['high_rewards'] + agent.config['discount'] * batch['high_masks'] * next_q
     target_q = jax.lax.stop_gradient(target_q)
 
     # pred q
@@ -776,7 +776,7 @@ def compute_prior_loss(agent, batch, network_params):
     return latent_subgoal_loss, {
         'latent_subgoal_loss':latent_subgoal_loss,
         'elbo_loss': elbo_loss,
-        'prior_loss': prior_loss,
+        'prior_loss': prior_loss_,
         'regul_loss': regul_loss,
         'recon_loss': recon_loss,
     }
